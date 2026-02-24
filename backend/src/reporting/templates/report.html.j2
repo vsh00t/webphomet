@@ -1,0 +1,274 @@
+{# WebPhomet — HTML Report Template (used as PDF intermediary) #}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>Penetration Test Report — {{ session.target_base_url }}</title>
+    <link rel="stylesheet" href="report.css">
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            margin: 2.5cm;
+            font-size: 11pt;
+            color: #2c3e50;
+            line-height: 1.6;
+        }
+        h1 { color: #c0392b; font-size: 24pt; margin-top: 0; }
+        h2 {
+            color: #2c3e50;
+            border-bottom: 2px solid #ecf0f1;
+            padding-bottom: 0.3em;
+            margin-top: 1.5em;
+        }
+        h3 { color: #34495e; margin-top: 1.2em; }
+        table {
+            border-collapse: collapse;
+            width: 100%;
+            margin: 1em 0;
+            font-size: 10pt;
+        }
+        th, td {
+            border: 1px solid #bdc3c7;
+            padding: 6px 10px;
+            text-align: left;
+        }
+        th { background: #ecf0f1; font-weight: 600; }
+        code {
+            background: #f8f9fa;
+            padding: 2px 5px;
+            font-size: 0.9em;
+            border-radius: 3px;
+        }
+        pre {
+            background: #f8f9fa;
+            padding: 12px;
+            overflow-x: auto;
+            border: 1px solid #e9ecef;
+            border-radius: 4px;
+            font-size: 9pt;
+        }
+        .cover-table td:first-child { font-weight: 600; width: 30%; }
+        .severity-critical { color: #c0392b; font-weight: 700; }
+        .severity-high { color: #e67e22; font-weight: 700; }
+        .severity-medium { color: #f39c12; font-weight: 600; }
+        .severity-low { color: #27ae60; }
+        .severity-info { color: #3498db; }
+        .finding-card {
+            border: 1px solid #ddd;
+            border-radius: 6px;
+            padding: 16px;
+            margin: 16px 0;
+            page-break-inside: avoid;
+        }
+        .finding-card h3 { margin-top: 0; }
+        .page-break { page-break-after: always; }
+        .badge {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 3px;
+            font-size: 9pt;
+            font-weight: 600;
+            color: white;
+        }
+        .badge-critical { background: #c0392b; }
+        .badge-high { background: #e67e22; }
+        .badge-medium { background: #f39c12; }
+        .badge-low { background: #27ae60; }
+        .badge-info { background: #3498db; }
+    </style>
+</head>
+<body>
+
+<!-- COVER -->
+<h1>Penetration Test Report</h1>
+
+<table class="cover-table">
+    <tr><td>Target</td><td>{{ session.target_base_url }}</td></tr>
+    <tr><td>App Type</td><td>{{ session.app_type or "N/A" }}</td></tr>
+    <tr><td>Session ID</td><td><code>{{ session.id }}</code></td></tr>
+    <tr><td>Status</td><td>{{ session.status }}</td></tr>
+    <tr><td>Date</td><td>{{ metadata.get("date", "N/A") }}</td></tr>
+    <tr><td>Tester</td><td>{{ metadata.get("tester", "WebPhomet Agent") }}</td></tr>
+</table>
+
+<div class="page-break"></div>
+
+<!-- EXECUTIVE SUMMARY -->
+<h2>1. Executive Summary</h2>
+
+<p>
+    This report presents the findings of an automated penetration test conducted
+    against <strong>{{ session.target_base_url }}</strong> using the WebPhomet
+    orchestration platform.
+</p>
+
+<p><strong>Total findings: {{ findings | length }}</strong></p>
+
+<table>
+    <tr><th>Severity</th><th>Count</th></tr>
+    <tr>
+        <td class="severity-critical">Critical</td>
+        <td>{{ findings | selectattr("severity", "equalto", "critical") | list | length }}</td>
+    </tr>
+    <tr>
+        <td class="severity-high">High</td>
+        <td>{{ findings | selectattr("severity", "equalto", "high") | list | length }}</td>
+    </tr>
+    <tr>
+        <td class="severity-medium">Medium</td>
+        <td>{{ findings | selectattr("severity", "equalto", "medium") | list | length }}</td>
+    </tr>
+    <tr>
+        <td class="severity-low">Low</td>
+        <td>{{ findings | selectattr("severity", "equalto", "low") | list | length }}</td>
+    </tr>
+    <tr>
+        <td class="severity-info">Info</td>
+        <td>{{ findings | selectattr("severity", "equalto", "info") | list | length }}</td>
+    </tr>
+</table>
+
+<!-- SCOPE & METHODOLOGY -->
+<h2>2. Scope &amp; Methodology</h2>
+
+<h3>2.1 Scope</h3>
+{% if session.scope %}
+<pre><code>{{ session.scope | tojson(indent=2) }}</code></pre>
+{% else %}
+<p>Scope details were not explicitly defined for this session.</p>
+{% endif %}
+
+<h3>2.2 Targets Discovered</h3>
+<table>
+    <tr><th>#</th><th>Host</th><th>Ports</th><th>Technologies</th></tr>
+    {% for target in targets %}
+    <tr>
+        <td>{{ loop.index }}</td>
+        <td>{{ target.host }}</td>
+        <td>{{ target.ports or "—" }}</td>
+        <td>{{ target.technologies or "—" }}</td>
+    </tr>
+    {% endfor %}
+</table>
+
+<h3>2.3 Tools Used</h3>
+<table>
+    <tr><th>#</th><th>Tool</th><th>Command</th><th>Status</th><th>Exit Code</th></tr>
+    {% for run in tool_runs %}
+    <tr>
+        <td>{{ loop.index }}</td>
+        <td>{{ run.tool_name }}</td>
+        <td><code>{{ run.command[:80] }}</code></td>
+        <td>{{ run.status }}</td>
+        <td>{{ run.exit_code if run.exit_code is not none else "—" }}</td>
+    </tr>
+    {% endfor %}
+</table>
+
+<div class="page-break"></div>
+
+<!-- RISK MATRIX -->
+<h2>3. Risk Matrix</h2>
+<table>
+    <tr><th>Severity</th><th>Impact</th><th>Likelihood</th><th>Count</th></tr>
+    <tr>
+        <td class="severity-critical">Critical</td>
+        <td>Very High</td><td>High</td>
+        <td>{{ findings | selectattr("severity", "equalto", "critical") | list | length }}</td>
+    </tr>
+    <tr>
+        <td class="severity-high">High</td>
+        <td>High</td><td>Medium–High</td>
+        <td>{{ findings | selectattr("severity", "equalto", "high") | list | length }}</td>
+    </tr>
+    <tr>
+        <td class="severity-medium">Medium</td>
+        <td>Medium</td><td>Medium</td>
+        <td>{{ findings | selectattr("severity", "equalto", "medium") | list | length }}</td>
+    </tr>
+    <tr>
+        <td class="severity-low">Low</td>
+        <td>Low</td><td>Low–Medium</td>
+        <td>{{ findings | selectattr("severity", "equalto", "low") | list | length }}</td>
+    </tr>
+    <tr>
+        <td class="severity-info">Info</td>
+        <td>Info</td><td>N/A</td>
+        <td>{{ findings | selectattr("severity", "equalto", "info") | list | length }}</td>
+    </tr>
+</table>
+
+<!-- TECHNICAL FINDINGS -->
+<h2>4. Technical Findings</h2>
+
+{% for finding in findings %}
+<div class="finding-card">
+    <h3>
+        4.{{ loop.index }} —
+        <span class="badge badge-{{ finding.severity }}">{{ finding.severity | upper }}</span>
+        {{ finding.title }}
+    </h3>
+
+    <table>
+        <tr><td><strong>Type</strong></td><td>{{ finding.vuln_type }}</td></tr>
+        <tr><td><strong>Status</strong></td><td>{{ finding.status }}</td></tr>
+        <tr><td><strong>Likelihood</strong></td><td>{{ finding.likelihood or "N/A" }}</td></tr>
+    </table>
+
+    <h4>Description</h4>
+    <p>{{ finding.description or "<em>No description provided.</em>" }}</p>
+
+    {% if finding.evidence %}
+    <h4>Evidence</h4>
+    <pre><code>{{ finding.evidence }}</code></pre>
+    {% endif %}
+
+    {% if finding.poc %}
+    <h4>Proof of Concept</h4>
+    <pre><code>{{ finding.poc }}</code></pre>
+    {% endif %}
+
+    {% if finding.impact %}
+    <h4>Impact</h4>
+    <p>{{ finding.impact }}</p>
+    {% endif %}
+
+    {% if finding.recommendation %}
+    <h4>Recommendation</h4>
+    <p>{{ finding.recommendation }}</p>
+    {% endif %}
+
+    {% if finding.references %}
+    <h4>References</h4>
+    <ul>
+        {% for key, value in finding.references.items() %}
+        <li><strong>{{ key }}:</strong> {{ value }}</li>
+        {% endfor %}
+    </ul>
+    {% endif %}
+</div>
+{% endfor %}
+
+<div class="page-break"></div>
+
+<!-- ANNEXES -->
+<h2>5. Annexes</h2>
+
+<h3>A. Raw Tool Outputs</h3>
+<p>
+    Artefacts are stored in the session artifacts directory and can be retrieved
+    via the WebPhomet API using session ID <code>{{ session.id }}</code>.
+</p>
+
+<h3>B. Methodology Notes</h3>
+<p>
+    This assessment was performed using WebPhomet's autonomous pentesting
+    pipeline which coordinates security tools through the Model Context Protocol
+    (MCP). All activities were constrained to the defined scope.
+</p>
+
+<hr>
+<p><em>Report generated by WebPhomet v0.1.0</em></p>
+
+</body>
+</html>

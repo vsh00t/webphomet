@@ -1,0 +1,60 @@
+[build-system]
+requires = ["setuptools>=69.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "webphomet"
+version = "0.1.0"
+description = "WebPhomet — Autonomous Pentesting Orchestration Platform"
+requires-python = ">=3.12"
+license = {text = "Proprietary"}
+authors = [
+    {name = "WebPhomet Team"},
+]
+
+dependencies = [
+    "fastapi>=0.115,<1.0",
+    "uvicorn[standard]>=0.32,<1.0",
+    "sqlalchemy[asyncio]>=2.0,<3.0",
+    "asyncpg>=0.30,<1.0",
+    "celery[redis]>=5.4,<6.0",
+    "redis>=5.0,<6.0",
+    "pydantic>=2.9,<3.0",
+    "pydantic-settings>=2.6,<3.0",
+    "httpx>=0.28,<1.0",
+    "jinja2>=3.1,<4.0",
+    "python-json-logger>=2.0,<3.0",
+    "alembic>=1.14,<2.0",
+    "weasyprint>=62.0,<64.0",
+    "markdown>=3.6,<4.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.24",
+    "httpx",           # for TestClient
+    "ruff>=0.8",
+    "mypy>=1.13",
+    "pre-commit>=4.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["src*"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "UP", "B", "SIM", "TCH"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+plugins = ["pydantic.mypy"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]

@@ -1,0 +1,38 @@
+# ──────────────────────────────────────────────────────────────
+# Vulnerable target applications for testing WebPhomet
+# ──────────────────────────────────────────────────────────────
+#
+# Usage:
+#   docker compose -f targets/docker-compose.targets.yml up -d
+#
+#   DVWA        → http://localhost:4280
+#   Juice Shop  → http://localhost:3000
+# ──────────────────────────────────────────────────────────────
+
+version: "3.9"
+
+services:
+  # ── DVWA (Damn Vulnerable Web Application) ─────────────────
+  dvwa:
+    image: vulnerables/web-dvwa
+    restart: unless-stopped
+    ports:
+      - "4280:80"
+    environment:
+      MYSQL_ROOT_PASSWORD: dvwa
+    networks:
+      - webphomet-net
+
+  # ── OWASP Juice Shop ──────────────────────────────────────
+  juice-shop:
+    image: bkimminich/juice-shop
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    networks:
+      - webphomet-net
+
+networks:
+  webphomet-net:
+    external: true
+    name: webphomet_webphomet-net
