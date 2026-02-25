@@ -297,10 +297,15 @@ class AgentOrchestrator:
         self.state.messages.append(message)
 
         # Notify via WebSocket: agent thinking
+        tool_calls_summary = []
+        if message.get("tool_calls"):
+            for tc in message["tool_calls"]:
+                tool_calls_summary.append(tc["function"]["name"])
         await ws_manager.send_to_session(sid, "agent_message", {
             "iteration": self.state.iteration,
-            "content": (message.get("content") or "")[:500],
+            "content": (message.get("content") or "")[:2000],
             "has_tool_calls": bool(message.get("tool_calls")),
+            "tool_calls": tool_calls_summary,
         })
 
         # 2. Check if LLM wants to call tools

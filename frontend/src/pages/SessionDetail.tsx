@@ -146,8 +146,8 @@ export default function SessionDetail() {
         </div>
       )}
 
-      {/* Two columns: Tool Runs + Live Events */}
-      <div className="grid grid-cols-2 gap-4">
+      {/* Three columns: Tool Runs | Model Thinking | Live Events */}
+      <div className="grid grid-cols-3 gap-4">
         {/* Tool Runs */}
         <div className="rounded" style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)' }}>
           <h3 className="px-4 py-2 text-sm font-bold"
@@ -167,6 +167,53 @@ export default function SessionDetail() {
             ))}
             {toolRuns.length === 0 && (
               <p className="px-4 py-4 text-xs" style={{ color: 'var(--text-secondary)' }}>No tool runs yet.</p>
+            )}
+          </div>
+        </div>
+
+        {/* Model Thinking */}
+        <div className="rounded" style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)' }}>
+          <h3 className="px-4 py-2 text-sm font-bold"
+              style={{ borderBottom: '1px solid var(--border)', color: '#a78bfa' }}>
+            🧠 Model Thinking
+          </h3>
+          <div className="max-h-80 overflow-auto">
+            {events
+              .filter((evt) => evt.type === 'agent_message')
+              .slice(0, 30)
+              .map((evt, i) => {
+                const d = evt.data as { iteration?: number; content?: string; has_tool_calls?: boolean; tool_calls?: string[] };
+                return (
+              <div key={i} className="px-4 py-3 text-xs"
+                   style={{ borderBottom: '1px solid var(--border)' }}>
+                <div className="flex items-center gap-2 mb-1">
+                  <span className="px-1.5 py-0.5 rounded font-bold"
+                        style={{ background: '#a78bfa22', color: '#a78bfa', fontSize: '10px' }}>
+                    Iter {d.iteration}
+                  </span>
+                  {d.tool_calls && d.tool_calls.length > 0 && (
+                    <span className="text-xs" style={{ color: 'var(--accent)' }}>
+                      → {d.tool_calls.join(', ')}
+                    </span>
+                  )}
+                </div>
+                {d.content && (
+                  <p className="whitespace-pre-wrap leading-relaxed" style={{ color: 'var(--text-primary)' }}>
+                    {d.content}
+                  </p>
+                )}
+                {!d.content && d.has_tool_calls && (
+                  <p style={{ color: 'var(--text-secondary)', fontStyle: 'italic' }}>
+                    Calling tools...
+                  </p>
+                )}
+              </div>
+                );
+            })}
+            {events.filter((evt) => evt.type === 'agent_message').length === 0 && (
+              <p className="px-4 py-4 text-xs" style={{ color: 'var(--text-secondary)' }}>
+                No agent reasoning yet. {!connected && 'WebSocket disconnected.'}
+              </p>
             )}
           </div>
         </div>
