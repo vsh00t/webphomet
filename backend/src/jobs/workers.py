@@ -25,6 +25,7 @@ mcp_gateway = MCPGateway(
         "cli-security": settings.MCP_CLI_SECURITY_URL,
         "caido": settings.MCP_CAIDO_URL,
         "devtools": settings.MCP_DEVTOOLS_URL,
+        "git-code": settings.MCP_GIT_CODE_URL,
     }
 )
 
@@ -1407,4 +1408,316 @@ def run_ssrf_tests(
         return _run_async(_execute())
     except Exception as e:
         logger.exception("SSRF tests failed for session %s", session_id)
+        return {"session_id": session_id, "tool_run_id": tool_run_id, "status": "failed", "error": str(e)}
+
+
+# ── Git/Code tasks ───────────────────────────────────────────
+
+@celery_app.task(name="jobs.git_code_call", bind=True)
+def git_code_call(
+    self,
+    session_id: str,
+    tool_run_id: str,
+    method: str,
+    params: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Proxy a JSON-RPC call to the MCP Git/Code server."""
+
+    async def _execute():
+        logger.info("Git/Code call: %s for session %s", method, session_id)
+        result = await mcp_gateway.call(
+            server="git-code",
+            method=method,
+            params=params or {},
+        )
+
+        stdout = json.dumps(result, indent=2, default=str)
+        await _persist_result(
+            session_id=session_id,
+            tool_run_id=tool_run_id,
+            tool_name=f"git_code_{method}",
+            stdout=stdout,
+            stderr="",
+            exit_code=0,
+        )
+        return {
+            "session_id": session_id,
+            "tool_run_id": tool_run_id,
+            "status": "success",
+            "method": method,
+            "result": result,
+        }
+
+    try:
+        return _run_async(_execute())
+    except Exception as e:
+        logger.exception("Git/Code call %s failed for session %s", method, session_id)
+        return {"session_id": session_id, "tool_run_id": tool_run_id, "status": "failed", "error": str(e)}
+
+
+@celery_app.task(name="jobs.run_code_audit", bind=True)
+def run_code_audit(
+    self,
+    session_id: str,
+    tool_run_id: str,
+    repo_url: str | None = None,
+    repo_name: str | None = None,
+    categories: list[str] | None = None,
+) -> dict[str, Any]:
+    """Clone repo (if needed) and run full security audit with hotspot detection.
+
+    Pipeline: clone → full_security_audit → persist hotspots as findings.
+    """
+
+    async def _execute():
+        if repo_url:
+            clone_result = await mcp_gateway.call(
+                server="git-code",
+                method="clone_repo",
+                params={"url": repo_url, "name": repo_name},
+            )
+            actual_name = clone_result.get("name", repo_name or "unknown")
+            logger.info("Clone result: %s", clone_result.get("status"))
+        elif repo_name:
+            actual_name = repo_name
+        else:
+            return {
+                "session_id": session_id, "tool_run_id": tool_run_id,
+                "status": "failed", "error": "Either repo_url or repo_name required",
+            }
+
+        audit = await mcp_gateway.call(
+            server="git-code",
+            method="full_security_audit",
+            params={"repo_name": actual_name},
+        )
+
+        if "error" in audit:
+            return {
+                "session_id": session_id, "tool_run_id": tool_run_id,
+                "status": "failed", "error": audit["error"],
+            }
+
+        hotspots = audit.get("hotspots_summary", {})
+        targets = audit.get("prioritized_targets", [])
+
+        hotspot_result = await mcp_gateway.call(
+            server="git-code",
+            method="find_hotspots",
+            params={"repo_name": actual_name, "categories": categories, "max_results": 50},
+        )
+        code_findings = []
+        for h in hotspot_result.get("hotspots", []):
+            code_findings.append({
+                "vuln_type": f"code_{h['category']}",
+                "title": f"Code Hotspot: {h['description']}",
+                "severity": h["severity"],
+                "url": f"file://{h['file']}#L{h['line']}",
+                "evidence": h["code_snippet"],
+                "description": f"Static analysis: {h['description']} at {h['file']}:{h['line']} ({h['language']})",
+            })
+
+        findings_created = await _persist_security_findings(session_id, code_findings)
+
+        stdout = json.dumps({"audit": audit, "findings_created": findings_created}, indent=2, default=str)
+        await _persist_result(
+            session_id=session_id, tool_run_id=tool_run_id,
+            tool_name="code_audit", stdout=stdout, stderr="", exit_code=0,
+        )
+
+        return {
+            "session_id": session_id, "tool_run_id": tool_run_id,
+            "status": "success", "repo_name": actual_name,
+            "total_hotspots": hotspots.get("total", 0),
+            "by_category": hotspots.get("by_category", {}),
+            "by_severity": hotspots.get("by_severity", {}),
+            "prioritized_targets": targets[:10],
+            "findings_persisted": findings_created,
+            "recommendation": audit.get("recommendation", ""),
+        }
+
+    try:
+        return _run_async(_execute())
+    except Exception as e:
+        logger.exception("Code audit failed for session %s", session_id)
+        return {"session_id": session_id, "tool_run_id": tool_run_id, "status": "failed", "error": str(e)}
+
+
+# ═══════════════════════════════════════════════════════════════
+# Mobile traffic analysis (Phase 3.2)
+# ═══════════════════════════════════════════════════════════════
+
+@celery_app.task(name="jobs.analyze_mobile_traffic", bind=True)
+def analyze_mobile_traffic(
+    self,
+    session_id: str,
+    tool_run_id: str,
+    host_filter: str | None = None,
+    limit: int = 200,
+) -> dict[str, Any]:
+    """Pull Caido intercepted requests, classify endpoints, detect auth & sensitive data."""
+
+    import re as _re
+    from urllib.parse import urlparse
+
+    SENSITIVE_PATTERNS = {
+        "auth_bearer": _re.compile(r"(?i)authorization:\s*bearer\s+\S+"),
+        "auth_basic": _re.compile(r"(?i)authorization:\s*basic\s+\S+"),
+        "api_key": _re.compile(r"(?i)(api[_-]?key|x-api-key|token)\s*[:=]\s*\S+"),
+        "cookie_session": _re.compile(r"(?i)(session|jwt|auth)[_-]?(id|token)\s*=\s*\S+"),
+        "credit_card": _re.compile(r"\b(?:\d{4}[- ]?){3}\d{4}\b"),
+        "email": _re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b"),
+        "password_field": _re.compile(r'(?i)"(password|passwd|secret|pin|otp)"\s*:\s*"'),
+        "jwt_token": _re.compile(r"\beyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b"),
+        "ssn": _re.compile(r"\b\d{3}-\d{2}-\d{4}\b"),
+        "private_key": _re.compile(r"-----BEGIN\s+(RSA\s+)?PRIVATE\s+KEY-----"),
+    }
+
+    async def _execute():
+        gw = mcp_gateway
+        # Pull requests from Caido
+        params: dict[str, Any] = {"limit": limit}
+        if host_filter:
+            params["host"] = host_filter
+        resp = await gw.call("caido", "get_requests", params)
+
+        requests_raw = resp.get("requests", [])
+        if not requests_raw:
+            await _persist_result(
+                session_id=session_id, tool_run_id=tool_run_id,
+                tool_name="analyze_mobile_traffic",
+                stdout=json.dumps({"endpoints": [], "summary": "No requests captured"}),
+                stderr="", exit_code=0,
+            )
+            return {
+                "session_id": session_id, "tool_run_id": tool_run_id,
+                "status": "success", "endpoints": 0,
+            }
+
+        # Classify endpoints
+        endpoint_map: dict[str, dict[str, Any]] = {}
+        auth_mechanisms: set[str] = set()
+        sensitive_findings: list[dict[str, str]] = []
+
+        for req in requests_raw:
+            raw = req.get("raw", "") or ""
+            url = req.get("url", "") or req.get("path", "")
+            method = req.get("method", "GET")
+            status_code = req.get("status_code", 0)
+
+            # Parse endpoint
+            parsed = urlparse(url)
+            path = parsed.path or "/"
+            # Normalize path — replace numeric IDs with {id}
+            norm_path = _re.sub(r"/\d+(?=/|$)", "/{id}", path)
+            endpoint_key = f"{method} {norm_path}"
+
+            if endpoint_key not in endpoint_map:
+                endpoint_map[endpoint_key] = {
+                    "method": method,
+                    "path": norm_path,
+                    "original_paths": [],
+                    "status_codes": [],
+                    "count": 0,
+                    "has_body": False,
+                    "content_types": set(),
+                    "auth": set(),
+                    "sensitive_data": [],
+                }
+
+            ep = endpoint_map[endpoint_key]
+            ep["count"] += 1
+            if len(ep["original_paths"]) < 5:
+                ep["original_paths"].append(path)
+            if status_code:
+                ep["status_codes"].append(status_code)
+
+            # Check for auth & sensitive data
+            full_text = raw
+            for pattern_name, pattern in SENSITIVE_PATTERNS.items():
+                if pattern.search(full_text):
+                    if pattern_name.startswith("auth_") or pattern_name == "api_key" or pattern_name == "cookie_session":
+                        auth_mechanisms.add(pattern_name)
+                        ep["auth"].add(pattern_name)
+                    else:
+                        ep["sensitive_data"].append(pattern_name)
+                        sensitive_findings.append({
+                            "type": pattern_name,
+                            "endpoint": endpoint_key,
+                            "url": url[:200],
+                        })
+
+            # Content type detection
+            ct_match = _re.search(r"(?i)content-type:\s*([^\r\n;]+)", full_text)
+            if ct_match:
+                ep["content_types"].add(ct_match.group(1).strip())
+            if method in ("POST", "PUT", "PATCH"):
+                ep["has_body"] = True
+
+        # Build API map
+        api_endpoints = []
+        for key, ep in sorted(endpoint_map.items(), key=lambda x: -x[1]["count"]):
+            api_endpoints.append({
+                "endpoint": key,
+                "method": ep["method"],
+                "path": ep["path"],
+                "sample_paths": ep["original_paths"][:3],
+                "request_count": ep["count"],
+                "status_codes": sorted(set(ep["status_codes"])),
+                "has_body": ep["has_body"],
+                "content_types": sorted(ep["content_types"]),
+                "auth_mechanisms": sorted(ep["auth"]),
+                "sensitive_data_types": sorted(set(ep["sensitive_data"])),
+            })
+
+        summary = {
+            "total_requests_analyzed": len(requests_raw),
+            "unique_endpoints": len(api_endpoints),
+            "auth_mechanisms_found": sorted(auth_mechanisms),
+            "sensitive_data_findings": len(sensitive_findings),
+            "endpoints": api_endpoints,
+            "sensitive_findings": sensitive_findings[:50],
+            "host_filter": host_filter,
+        }
+
+        # Persist findings for sensitive data exposed in mobile traffic
+        if sensitive_findings:
+            findings_to_persist = []
+            seen = set()
+            for sf in sensitive_findings:
+                fk = f"{sf['type']}|{sf['endpoint']}"
+                if fk in seen:
+                    continue
+                seen.add(fk)
+                findings_to_persist.append({
+                    "title": f"Sensitive data ({sf['type']}) in mobile API: {sf['endpoint']}",
+                    "severity": "high" if sf["type"] in ("password_field", "credit_card", "private_key", "ssn") else "medium",
+                    "vuln_type": "sensitive_data_exposure",
+                    "detail": json.dumps(sf),
+                    "evidence": sf["endpoint"],
+                    "url": sf.get("url", ""),
+                })
+            if findings_to_persist:
+                await _persist_security_findings(session_id, findings_to_persist)
+
+        stdout = json.dumps(summary, indent=2, default=str)
+        await _persist_result(
+            session_id=session_id, tool_run_id=tool_run_id,
+            tool_name="analyze_mobile_traffic",
+            stdout=stdout, stderr="", exit_code=0,
+        )
+
+        return {
+            "session_id": session_id, "tool_run_id": tool_run_id,
+            "status": "success",
+            "total_requests": len(requests_raw),
+            "unique_endpoints": len(api_endpoints),
+            "auth_mechanisms": sorted(auth_mechanisms),
+            "sensitive_findings": len(sensitive_findings),
+        }
+
+    try:
+        return _run_async(_execute())
+    except Exception as e:
+        logger.exception("Mobile traffic analysis failed for session %s", session_id)
         return {"session_id": session_id, "tool_run_id": tool_run_id, "status": "failed", "error": str(e)}

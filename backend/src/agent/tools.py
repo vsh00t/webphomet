@@ -835,6 +835,160 @@ export_report = _tool(
 
 
 # ---------------------------------------------------------------------------
+# Git/Code — Source Code Analysis (Phase 3.1)
+# ---------------------------------------------------------------------------
+
+git_clone_repo = _tool(
+    name="git_clone_repo",
+    description="Clone a git repository for source code analysis and code-aware dynamic testing.",
+    parameters={
+        "session_id": {"type": "string", "description": "UUID of the pentest session"},
+        "url": {"type": "string", "description": "Git clone URL (https:// or git://)"},
+        "name": {"type": "string", "description": "Optional local name for the cloned repo"},
+    },
+    required=["session_id", "url"],
+)
+
+git_list_repos = _tool(
+    name="git_list_repos",
+    description="List all available repositories cloned for analysis.",
+    parameters={
+        "session_id": {"type": "string", "description": "UUID of the pentest session"},
+    },
+    required=["session_id"],
+)
+
+git_get_tree = _tool(
+    name="git_get_tree",
+    description="Get directory tree of a repository to understand its structure.",
+    parameters={
+        "session_id": {"type": "string", "description": "UUID of the pentest session"},
+        "repo_name": {"type": "string", "description": "Name of the repository"},
+        "path": {"type": "string", "description": "Subdirectory path (optional, default: root)"},
+        "max_depth": {"type": "integer", "description": "Maximum tree depth (default: 3)"},
+    },
+    required=["session_id", "repo_name"],
+)
+
+git_get_file = _tool(
+    name="git_get_file",
+    description="Read source file content with optional line range from a cloned repository.",
+    parameters={
+        "session_id": {"type": "string", "description": "UUID of the pentest session"},
+        "repo_name": {"type": "string", "description": "Name of the repository"},
+        "file_path": {"type": "string", "description": "Relative file path within the repo"},
+        "start_line": {"type": "integer", "description": "Starting line number (default: 1)"},
+        "end_line": {"type": "integer", "description": "Ending line number (optional)"},
+    },
+    required=["session_id", "repo_name", "file_path"],
+)
+
+git_search_code = _tool(
+    name="git_search_code",
+    description="Search for code patterns (text or regex) in a repository. Find security-sensitive code, API endpoints, auth logic.",
+    parameters={
+        "session_id": {"type": "string", "description": "UUID of the pentest session"},
+        "repo_name": {"type": "string", "description": "Name of the repository"},
+        "query": {"type": "string", "description": "Search pattern (text or regex)"},
+        "is_regex": {"type": "boolean", "description": "Whether query is regex (default: false)"},
+        "file_pattern": {"type": "string", "description": "Glob pattern for files (e.g. '*.py')"},
+    },
+    required=["session_id", "repo_name", "query"],
+)
+
+git_find_hotspots = _tool(
+    name="git_find_hotspots",
+    description="Scan repository for security-sensitive code patterns (sinks, hardcoded secrets, unsafe crypto). Categories: sqli, xss, command_injection, ssrf, path_traversal, crypto, deserialization.",
+    parameters={
+        "session_id": {"type": "string", "description": "UUID of the pentest session"},
+        "repo_name": {"type": "string", "description": "Name of the repository"},
+        "categories": {"type": "array", "items": {"type": "string"}, "description": "Categories to scan (default: all)"},
+    },
+    required=["session_id", "repo_name"],
+)
+
+run_code_audit = _tool(
+    name="run_code_audit",
+    description="Run complete code security audit: clone repo, analyze stats, detect hotspots, generate prioritized target list for dynamic testing, persist hotspots as findings.",
+    parameters={
+        "session_id": {"type": "string", "description": "UUID of the pentest session"},
+        "repo_url": {"type": "string", "description": "Git clone URL (if repo not yet cloned)"},
+        "repo_name": {"type": "string", "description": "Name of already-cloned repo (alternative to repo_url)"},
+        "categories": {"type": "array", "items": {"type": "string"}, "description": "Hotspot categories to focus on (default: all)"},
+    },
+    required=["session_id"],
+)
+
+git_log = _tool(
+    name="git_log",
+    description="Get git commit history for a repository or specific file.",
+    parameters={
+        "session_id": {"type": "string", "description": "UUID of the pentest session"},
+        "repo_name": {"type": "string", "description": "Name of the repository"},
+        "max_count": {"type": "integer", "description": "Max commits to return (default: 20)"},
+        "file_path": {"type": "string", "description": "Optional file to filter history"},
+    },
+    required=["session_id", "repo_name"],
+)
+
+git_diff = _tool(
+    name="git_diff",
+    description="Get diff between two commits to identify recent changes in source code.",
+    parameters={
+        "session_id": {"type": "string", "description": "UUID of the pentest session"},
+        "repo_name": {"type": "string", "description": "Name of the repository"},
+        "commit_a": {"type": "string", "description": "First commit (default: HEAD~1)"},
+        "commit_b": {"type": "string", "description": "Second commit (default: HEAD)"},
+    },
+    required=["session_id", "repo_name"],
+)
+
+git_blame = _tool(
+    name="git_blame",
+    description="Get git blame for a file line range — identify who authored security-sensitive code.",
+    parameters={
+        "session_id": {"type": "string", "description": "UUID of the pentest session"},
+        "repo_name": {"type": "string", "description": "Name of the repository"},
+        "file_path": {"type": "string", "description": "Relative file path"},
+        "start_line": {"type": "integer", "description": "Start line (default: 1)"},
+        "end_line": {"type": "integer", "description": "End line (default: 50)"},
+    },
+    required=["session_id", "repo_name", "file_path"],
+)
+
+summarize_risks = _tool(
+    name="summarize_risks",
+    description="Analyze a code snippet and summarize security risks using AI. Evaluates code context, language, and potential vulnerabilities.",
+    parameters={
+        "session_id": {"type": "string", "description": "UUID of the pentest session"},
+        "code_snippet": {"type": "string", "description": "The code to analyze (max 5000 chars)"},
+        "language": {"type": "string", "description": "Programming language of the snippet"},
+        "context": {"type": "string", "description": "Additional context (e.g. 'handles user login')"},
+    },
+    required=["session_id", "code_snippet", "language"],
+)
+
+
+# ── Mobile testing tools ────────────────────────────────────
+
+analyze_mobile_traffic = _tool(
+    name="analyze_mobile_traffic",
+    description=(
+        "Analyze mobile app traffic captured by Caido proxy. Pulls intercepted requests, "
+        "groups by API endpoint, identifies auth mechanisms (Bearer, cookies, API keys), "
+        "detects sensitive data patterns, and maps the full API surface. "
+        "Produces a structured report for further OWASP testing."
+    ),
+    parameters={
+        "session_id": {"type": "string", "description": "UUID of the pentest session"},
+        "host_filter": {"type": "string", "description": "Filter by target API host (e.g. api.target.com)"},
+        "limit": {"type": "integer", "description": "Max requests to analyze (default: 200)"},
+    },
+    required=["session_id"],
+)
+
+
+# ---------------------------------------------------------------------------
 # All tools (convenience list for passing to Z.ai)
 # ---------------------------------------------------------------------------
 
@@ -868,6 +1022,18 @@ ALL_TOOLS: list[dict[str, Any]] = [
     run_injection_tests,
     run_auth_tests,
     run_ssrf_tests,
+    git_clone_repo,
+    git_list_repos,
+    git_get_tree,
+    git_get_file,
+    git_search_code,
+    git_find_hotspots,
+    run_code_audit,
+    git_log,
+    git_diff,
+    git_blame,
+    summarize_risks,
+    analyze_mobile_traffic,
     parse_nmap_output,
     summarize_findings,
     correlate_findings,

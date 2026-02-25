@@ -23,6 +23,10 @@ COPY caido_client.py /app/
 COPY server.py /app/
 COPY app.py /app/
 
+RUN addgroup --system appuser && adduser --system --ingroup appuser appuser && \
+    chown -R appuser:appuser /app
+USER appuser
+
 EXPOSE 9200
 
 CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "9200", "--log-level", "info"]

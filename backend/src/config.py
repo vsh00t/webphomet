@@ -36,6 +36,7 @@ class Settings(BaseSettings):
     MCP_CLI_SECURITY_URL: str = "http://mcp-cli-security:9100"
     MCP_CAIDO_URL: str = "http://mcp-caido:9200"
     MCP_DEVTOOLS_URL: str = "http://mcp-devtools:9300"
+    MCP_GIT_CODE_URL: str = "http://mcp-git-code:9400"
 
     # ── Safety & Performance ─────────────────────────────
     SAFE_MODE: bool = True

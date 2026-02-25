@@ -15,6 +15,10 @@ RUN playwright install --with-deps chromium
 
 COPY . .
 
+RUN addgroup --system appuser && adduser --system --ingroup appuser appuser && \
+    chown -R appuser:appuser /app
+USER appuser
+
 EXPOSE 9300
 
 CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "9300"]

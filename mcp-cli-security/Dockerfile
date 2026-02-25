@@ -70,6 +70,11 @@ COPY secret_scanner.py /app/
 # ── Artifacts directory ──────────────────────────────────────
 RUN mkdir -p /app/artifacts
 
+# ── Non-root user ────────────────────────────────────────────
+RUN addgroup --system appuser && adduser --system --ingroup appuser appuser && \
+    chown -R appuser:appuser /app
+USER appuser
+
 # ── Run FastAPI server ─────────────────────────────────────
 EXPOSE 9100
 CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "9100", "--log-level", "info"]

@@ -25,6 +25,8 @@ from src.agent.client import ZaiClient
 from src.agent.executor import dispatch
 from src.agent.tools import ALL_TOOLS
 from src.config import settings
+from src.core.breakpoints import BreakpointAction, BreakpointPhase, breakpoint_manager
+from src.core.ws_manager import ws_breakpoint_callback, ws_manager
 from src.db import dal
 from src.db.database import async_session_factory
 from src.db.models import SessionStatus
@@ -155,6 +157,9 @@ class AgentOrchestrator:
 
     async def _initialize(self) -> None:
         """Load session from DB and build the system prompt."""
+        # Wire WebSocket callback for breakpoints
+        breakpoint_manager.set_ws_callback(ws_breakpoint_callback)
+
         async with async_session_factory() as db:
             session = await dal.get_session(db, self.session_id)
             if session is None:
@@ -182,10 +187,31 @@ class AgentOrchestrator:
                 },
             ]
 
+    # ── phase detection ───────────────────────────────────────
+
+    # Map tool names to the phase they belong to for breakpoint detection
+    _TOOL_PHASE_MAP: dict[str, BreakpointPhase] = {
+        "run_recon": BreakpointPhase.PRE_RECON,
+        "get_recon_results": BreakpointPhase.POST_RECON,
+        "run_discovery": BreakpointPhase.PRE_SCANNING,
+        "run_injection_tests": BreakpointPhase.POST_SCANNING,
+        "run_auth_tests": BreakpointPhase.POST_OWASP,
+        "run_ssrf_tests": BreakpointPhase.POST_OWASP,
+        "build_report": BreakpointPhase.PRE_REPORT,
+    }
+
+    _EXPLOIT_TOOLS = {"run_injection_tests", "run_auth_tests", "run_ssrf_tests"}
+
+    def _detect_phase(self, tool_name: str) -> BreakpointPhase | None:
+        """Detect the current pentest phase from the tool being called."""
+        return self._TOOL_PHASE_MAP.get(tool_name)
+
     # ── single step ─────────────────────────────────────────
 
     async def _step(self) -> None:
         """Execute one plan → execute → evaluate cycle."""
+        sid = str(self.session_id)
+
         # 1. Call LLM
         response = await self.client.chat(
             messages=self.state.messages,
@@ -204,6 +230,13 @@ class AgentOrchestrator:
 
         # Append assistant message to history
         self.state.messages.append(message)
+
+        # Notify via WebSocket: agent thinking
+        await ws_manager.send_to_session(sid, "agent_message", {
+            "iteration": self.state.iteration,
+            "content": (message.get("content") or "")[:500],
+            "has_tool_calls": bool(message.get("tool_calls")),
+        })
 
         # 2. Check if LLM wants to call tools
         tool_calls = message.get("tool_calls")
@@ -248,6 +281,64 @@ class AgentOrchestrator:
                     json.dumps(fn_args)[:200],
                 )
 
+                # ── Breakpoint checks ──────────────────────
+                # Phase breakpoint
+                phase = self._detect_phase(fn_name)
+                if phase:
+                    bp = await breakpoint_manager.check_phase(sid, phase, context=fn_name)
+                    if bp and bp.action == BreakpointAction.REJECTED:
+                        self.state.messages.append({
+                            "role": "tool",
+                            "tool_call_id": tc_id,
+                            "content": json.dumps({
+                                "error": f"Operator rejected at {phase.value}: {bp.operator_message}",
+                                "action": "rejected",
+                            }),
+                        })
+                        continue
+
+                # Pre-exploit breakpoint
+                if fn_name in self._EXPLOIT_TOOLS:
+                    bp = await breakpoint_manager.check_phase(
+                        sid, BreakpointPhase.PRE_EXPLOIT,
+                        context=f"About to run exploit tool: {fn_name}",
+                    )
+                    if bp and bp.action == BreakpointAction.REJECTED:
+                        self.state.messages.append({
+                            "role": "tool",
+                            "tool_call_id": tc_id,
+                            "content": json.dumps({
+                                "error": f"Operator rejected exploit: {bp.operator_message}",
+                                "action": "rejected",
+                            }),
+                        })
+                        continue
+                    if bp and bp.action == BreakpointAction.MODIFIED and bp.modified_args:
+                        fn_args.update(bp.modified_args)
+
+                # Tool-specific breakpoint
+                tool_bp = await breakpoint_manager.check_tool(sid, fn_name, fn_args)
+                if tool_bp and tool_bp.action == BreakpointAction.REJECTED:
+                    self.state.messages.append({
+                        "role": "tool",
+                        "tool_call_id": tc_id,
+                        "content": json.dumps({
+                            "error": f"Operator rejected tool {fn_name}: {tool_bp.operator_message}",
+                            "action": "rejected",
+                        }),
+                    })
+                    continue
+                if tool_bp and tool_bp.action == BreakpointAction.MODIFIED and tool_bp.modified_args:
+                    fn_args.update(tool_bp.modified_args)
+
+                # ── Dispatch ───────────────────────────────
+                # Notify WS: tool started
+                await ws_manager.send_to_session(sid, "tool_started", {
+                    "tool_name": fn_name,
+                    "args": {k: str(v)[:100] for k, v in fn_args.items()},
+                    "iteration": self.state.iteration,
+                })
+
                 result_str = await dispatch(fn_name, fn_args, db)
 
                 # Track async tool runs for polling
@@ -258,6 +349,13 @@ class AgentOrchestrator:
                         tid = result_data.get("task_id")
                         if trid and tid:
                             self.state.pending_tool_runs[trid] = tid
+
+                    # Notify WS: tool dispatched
+                    await ws_manager.send_to_session(sid, "tool_dispatched", {
+                        "tool_name": fn_name,
+                        "tool_run_id": result_data.get("tool_run_id"),
+                        "task_id": result_data.get("task_id"),
+                    })
                 except (json.JSONDecodeError, AttributeError):
                     pass
 
@@ -279,6 +377,7 @@ class AgentOrchestrator:
         if not self.state.pending_tool_runs:
             return
 
+        sid = str(self.session_id)
         completed: list[str] = []
         polls = 0
 
@@ -312,6 +411,15 @@ class AgentOrchestrator:
                             ),
                         })
                         completed.append(trid)
+
+                        # Notify WS: tool completed
+                        await ws_manager.send_to_session(sid, "tool_completed", {
+                            "tool_run_id": trid,
+                            "tool_name": run.tool_name,
+                            "status": status,
+                            "exit_code": run.exit_code,
+                            "output_preview": (run.stdout or "")[:500],
+                        })
 
             for trid in completed:
                 self.state.pending_tool_runs.pop(trid, None)

@@ -1198,6 +1198,334 @@ async def _run_ssrf_tests(
     }
 
 
+# ═══════════════════════════════════════════════════════════════
+# Git/Code — Source Code Analysis (Phase 3.1)
+# ═══════════════════════════════════════════════════════════════
+
+
+@register("git_clone_repo")
+async def _git_clone_repo(
+    db: AsyncSession,
+    session_id: str,
+    url: str,
+    name: str | None = None,
+    **_: Any,
+) -> dict[str, Any]:
+    """Clone a git repository via the MCP Git/Code server."""
+    sid = uuid.UUID(session_id)
+    tool_run = await dal.create_tool_run(
+        db, session_id=sid, tool_name="git_clone_repo",
+        command=f"git clone {url}",
+    )
+    await dal.start_tool_run(db, tool_run.id)
+    await db.commit()
+
+    task = celery_app.send_task(
+        "jobs.git_code_call",
+        kwargs={
+            "session_id": session_id, "tool_run_id": str(tool_run.id),
+            "method": "clone_repo", "params": {"url": url, "name": name},
+        },
+    )
+    return {"tool_run_id": str(tool_run.id), "task_id": task.id, "status": "submitted"}
+
+
+@register("git_list_repos")
+async def _git_list_repos(
+    db: AsyncSession,
+    session_id: str,
+    **_: Any,
+) -> dict[str, Any]:
+    sid = uuid.UUID(session_id)
+    tool_run = await dal.create_tool_run(
+        db, session_id=sid, tool_name="git_list_repos", command="git list_repos",
+    )
+    await dal.start_tool_run(db, tool_run.id)
+    await db.commit()
+
+    task = celery_app.send_task(
+        "jobs.git_code_call",
+        kwargs={
+            "session_id": session_id, "tool_run_id": str(tool_run.id),
+            "method": "list_repos",
+        },
+    )
+    return {"tool_run_id": str(tool_run.id), "task_id": task.id, "status": "submitted"}
+
+
+@register("git_get_tree")
+async def _git_get_tree(
+    db: AsyncSession,
+    session_id: str,
+    repo_name: str,
+    path: str = "",
+    max_depth: int = 3,
+    **_: Any,
+) -> dict[str, Any]:
+    sid = uuid.UUID(session_id)
+    tool_run = await dal.create_tool_run(
+        db, session_id=sid, tool_name="git_get_tree", command=f"git tree {repo_name}/{path}",
+    )
+    await dal.start_tool_run(db, tool_run.id)
+    await db.commit()
+
+    task = celery_app.send_task(
+        "jobs.git_code_call",
+        kwargs={
+            "session_id": session_id, "tool_run_id": str(tool_run.id),
+            "method": "get_tree",
+            "params": {"repo_name": repo_name, "path": path, "max_depth": max_depth},
+        },
+    )
+    return {"tool_run_id": str(tool_run.id), "task_id": task.id, "status": "submitted"}
+
+
+@register("git_get_file")
+async def _git_get_file(
+    db: AsyncSession,
+    session_id: str,
+    repo_name: str,
+    file_path: str,
+    start_line: int = 1,
+    end_line: int | None = None,
+    **_: Any,
+) -> dict[str, Any]:
+    sid = uuid.UUID(session_id)
+    tool_run = await dal.create_tool_run(
+        db, session_id=sid, tool_name="git_get_file", command=f"git file {repo_name}/{file_path}",
+    )
+    await dal.start_tool_run(db, tool_run.id)
+    await db.commit()
+
+    params: dict[str, Any] = {
+        "repo_name": repo_name, "file_path": file_path, "start_line": start_line,
+    }
+    if end_line is not None:
+        params["end_line"] = end_line
+
+    task = celery_app.send_task(
+        "jobs.git_code_call",
+        kwargs={
+            "session_id": session_id, "tool_run_id": str(tool_run.id),
+            "method": "get_file", "params": params,
+        },
+    )
+    return {"tool_run_id": str(tool_run.id), "task_id": task.id, "status": "submitted"}
+
+
+@register("git_search_code")
+async def _git_search_code(
+    db: AsyncSession,
+    session_id: str,
+    repo_name: str,
+    query: str,
+    is_regex: bool = False,
+    file_pattern: str = "*",
+    **_: Any,
+) -> dict[str, Any]:
+    sid = uuid.UUID(session_id)
+    tool_run = await dal.create_tool_run(
+        db, session_id=sid, tool_name="git_search_code",
+        command=f"git search {repo_name} '{query}'",
+    )
+    await dal.start_tool_run(db, tool_run.id)
+    await db.commit()
+
+    task = celery_app.send_task(
+        "jobs.git_code_call",
+        kwargs={
+            "session_id": session_id, "tool_run_id": str(tool_run.id),
+            "method": "search_code",
+            "params": {
+                "repo_name": repo_name, "query": query,
+                "is_regex": is_regex, "file_pattern": file_pattern,
+            },
+        },
+    )
+    return {"tool_run_id": str(tool_run.id), "task_id": task.id, "status": "submitted"}
+
+
+@register("git_find_hotspots")
+async def _git_find_hotspots(
+    db: AsyncSession,
+    session_id: str,
+    repo_name: str,
+    categories: list[str] | None = None,
+    **_: Any,
+) -> dict[str, Any]:
+    sid = uuid.UUID(session_id)
+    tool_run = await dal.create_tool_run(
+        db, session_id=sid, tool_name="git_find_hotspots",
+        command=f"git hotspots {repo_name} cats={categories}",
+    )
+    await dal.start_tool_run(db, tool_run.id)
+    await db.commit()
+
+    task = celery_app.send_task(
+        "jobs.git_code_call",
+        kwargs={
+            "session_id": session_id, "tool_run_id": str(tool_run.id),
+            "method": "find_hotspots",
+            "params": {"repo_name": repo_name, "categories": categories},
+        },
+    )
+    return {"tool_run_id": str(tool_run.id), "task_id": task.id, "status": "submitted"}
+
+
+@register("run_code_audit")
+async def _run_code_audit(
+    db: AsyncSession,
+    session_id: str,
+    repo_url: str | None = None,
+    repo_name: str | None = None,
+    categories: list[str] | None = None,
+    **_: Any,
+) -> dict[str, Any]:
+    """Queue full code security audit via Celery."""
+    sid = uuid.UUID(session_id)
+    result = _policy.check(
+        session_id=session_id, tool_name="code_audit",
+        command=f"code_audit {repo_url or repo_name}",
+    )
+    if not result.allowed:
+        return {"error": f"Policy violation: {result.reason}", "rule": result.rule}
+
+    tool_run = await dal.create_tool_run(
+        db, session_id=sid, tool_name="code_audit",
+        command=f"run_code_audit {repo_url or repo_name}",
+    )
+    await dal.start_tool_run(db, tool_run.id)
+    await db.commit()
+
+    task = celery_app.send_task(
+        "jobs.run_code_audit",
+        kwargs={
+            "session_id": session_id, "tool_run_id": str(tool_run.id),
+            "repo_url": repo_url, "repo_name": repo_name, "categories": categories,
+        },
+    )
+    return {
+        "tool_run_id": str(tool_run.id), "task_id": task.id,
+        "tool_name": "code_audit", "status": "submitted",
+    }
+
+
+@register("git_log")
+async def _git_log(
+    db: AsyncSession,
+    session_id: str,
+    repo_name: str,
+    max_count: int = 20,
+    file_path: str | None = None,
+    **_: Any,
+) -> dict[str, Any]:
+    sid = uuid.UUID(session_id)
+    tool_run = await dal.create_tool_run(
+        db, session_id=sid, tool_name="git_log", command=f"git log {repo_name}",
+    )
+    await dal.start_tool_run(db, tool_run.id)
+    await db.commit()
+
+    params: dict[str, Any] = {"repo_name": repo_name, "max_count": max_count}
+    if file_path:
+        params["file_path"] = file_path
+
+    task = celery_app.send_task(
+        "jobs.git_code_call",
+        kwargs={
+            "session_id": session_id, "tool_run_id": str(tool_run.id),
+            "method": "git_log", "params": params,
+        },
+    )
+    return {"tool_run_id": str(tool_run.id), "task_id": task.id, "status": "submitted"}
+
+
+@register("git_diff")
+async def _git_diff(
+    db: AsyncSession,
+    session_id: str,
+    repo_name: str,
+    commit_a: str = "HEAD~1",
+    commit_b: str = "HEAD",
+    **_: Any,
+) -> dict[str, Any]:
+    sid = uuid.UUID(session_id)
+    tool_run = await dal.create_tool_run(
+        db, session_id=sid, tool_name="git_diff", command=f"git diff {repo_name}",
+    )
+    await dal.start_tool_run(db, tool_run.id)
+    await db.commit()
+
+    task = celery_app.send_task(
+        "jobs.git_code_call",
+        kwargs={
+            "session_id": session_id, "tool_run_id": str(tool_run.id),
+            "method": "git_diff",
+            "params": {"repo_name": repo_name, "commit_a": commit_a, "commit_b": commit_b},
+        },
+    )
+    return {"tool_run_id": str(tool_run.id), "task_id": task.id, "status": "submitted"}
+
+
+@register("git_blame")
+async def _git_blame(
+    db: AsyncSession,
+    session_id: str,
+    repo_name: str,
+    file_path: str,
+    start_line: int = 1,
+    end_line: int = 50,
+    **_: Any,
+) -> dict[str, Any]:
+    sid = uuid.UUID(session_id)
+    tool_run = await dal.create_tool_run(
+        db, session_id=sid, tool_name="git_blame", command=f"git blame {repo_name}/{file_path}",
+    )
+    await dal.start_tool_run(db, tool_run.id)
+    await db.commit()
+
+    task = celery_app.send_task(
+        "jobs.git_code_call",
+        kwargs={
+            "session_id": session_id, "tool_run_id": str(tool_run.id),
+            "method": "git_blame",
+            "params": {"repo_name": repo_name, "file_path": file_path, "start_line": start_line, "end_line": end_line},
+        },
+    )
+    return {"tool_run_id": str(tool_run.id), "task_id": task.id, "status": "submitted"}
+
+
+@register("summarize_risks")
+async def _summarize_risks(
+    db: AsyncSession,
+    session_id: str,
+    code_snippet: str,
+    language: str,
+    context: str = "",
+    **_: Any,
+) -> dict[str, Any]:
+    """Use the Z.ai agent to analyze a code snippet for security risks."""
+    from src.agent.client import ZaiClient
+
+    client = ZaiClient()
+    prompt = (
+        f"Analyze the following {language} code snippet for security vulnerabilities. "
+        f"Context: {context}\n\n```{language}\n{code_snippet[:5000]}\n```\n\n"
+        f"Provide a structured analysis with: vulnerability type, severity (critical/high/medium/low/info), "
+        f"description, affected line(s), and remediation recommendation."
+    )
+    try:
+        response = await client.chat(prompt)
+        return {
+            "session_id": session_id,
+            "analysis": response,
+            "language": language,
+            "snippet_length": len(code_snippet),
+        }
+    except Exception as e:
+        return {"error": f"AI analysis failed: {e}"}
+
+
 @register("summarize_findings")
 async def _summarize_findings(
     db: AsyncSession,
@@ -1309,4 +1637,39 @@ async def _export_report(
         "artifact_id": str(artifact.id),
         "file_path": artifact.file_path,
         "content_preview": (artifact.content or "")[:2000],
+    }
+
+
+# ═══════════════════════════════════════════════════════════════
+# Mobile traffic analysis (Phase 3.2)
+# ═══════════════════════════════════════════════════════════════
+
+
+@register("analyze_mobile_traffic")
+async def _analyze_mobile_traffic(
+    db: AsyncSession,
+    session_id: str,
+    host_filter: str | None = None,
+    limit: int = 200,
+    **_: Any,
+) -> dict[str, Any]:
+    """Analyze mobile app traffic captured by Caido proxy."""
+    sid = uuid.UUID(session_id)
+    tool_run = await dal.create_tool_run(
+        db, session_id=sid, tool_name="analyze_mobile_traffic",
+        command=f"analyze_mobile_traffic host={host_filter} limit={limit}",
+    )
+    await dal.start_tool_run(db, tool_run.id)
+    await db.commit()
+
+    task = celery_app.send_task(
+        "jobs.analyze_mobile_traffic",
+        kwargs={
+            "session_id": session_id, "tool_run_id": str(tool_run.id),
+            "host_filter": host_filter, "limit": limit,
+        },
+    )
+    return {
+        "tool_run_id": str(tool_run.id), "task_id": task.id,
+        "tool_name": "analyze_mobile_traffic", "status": "submitted",
     }

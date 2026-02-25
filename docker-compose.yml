@@ -138,10 +138,45 @@ services:
       retries: 3
       start_period: 15s
 
+  # ── MCP Git/Code Server (Source Analysis) ─────────────
+  mcp-git-code:
+    build:
+      context: ./mcp-git-code
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    env_file:
+      - .env
+    ports:
+      - "9400:9400"
+    volumes:
+      - repos:/repos
+    networks:
+      - webphomet-net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9400/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  # ── Frontend (React Dashboard) ────────────────────────
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    ports:
+      - "3001:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - webphomet-net
+
 volumes:
   postgres-data:
   redis-data:
   artifacts:
+  repos:
 
 networks:
   webphomet-net:
