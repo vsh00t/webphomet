@@ -108,10 +108,20 @@ export default function Dashboard() {
                     <button
                       onClick={() => launchMut.mutate(s.id)}
                       disabled={launchMut.isPending}
-                      className="px-2 py-1 rounded text-xs font-bold"
+                      className="px-2 py-1 rounded text-xs font-bold cursor-pointer hover:opacity-80"
                       style={{ background: 'var(--accent)', color: 'var(--bg-primary)' }}
                     >
-                      ▶ Launch Agent
+                      {launchMut.isPending ? '⏳ Starting...' : '▶ Launch Agent'}
+                    </button>
+                  )}
+                  {(s.status === 'completed' || s.status === 'failed') && (
+                    <button
+                      onClick={() => launchMut.mutate(s.id)}
+                      disabled={launchMut.isPending}
+                      className="px-2 py-1 rounded text-xs font-bold cursor-pointer hover:opacity-80"
+                      style={{ background: '#ffa502', color: 'var(--bg-primary)' }}
+                    >
+                      {launchMut.isPending ? '⏳ Starting...' : '🔄 Re-launch'}
                     </button>
                   )}
                   {s.status === 'running' && (

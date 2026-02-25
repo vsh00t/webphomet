@@ -123,6 +123,13 @@ class SessionCreate(BaseModel):
     config: dict[str, Any] | None = None
 
 
+class SessionUpdate(BaseModel):
+    """Payload to partially update a pentest session."""
+
+    status: SessionStatusEnum | None = None
+    config: dict[str, Any] | None = None
+
+
 class SessionResponse(BaseModel):
     """Pentest session as returned by the API."""
 

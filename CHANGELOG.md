@@ -514,7 +514,7 @@ Queries/mutations verificadas contra schema real:
 | Métrica | Valor |
 |---------|-------|
 | Archivos Python creados | ~30 |
-| Archivos Python modificados | ~25 |
+| Archivos Python modificados | ~25 |dps´x
 | Archivos config/template creados | 5 |
 | Archivos config modificados | 8 |
 | Líneas de código nuevas (aprox.) | ~9,000 |

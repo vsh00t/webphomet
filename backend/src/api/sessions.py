@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.core.schemas import SessionCreate, SessionResponse
+from src.core.schemas import SessionCreate, SessionResponse, SessionUpdate
 from src.db.database import get_db
 from src.db.models import PentestSession, SessionStatus
 
@@ -96,3 +96,32 @@ async def delete_session(
             detail=f"Session {session_id} not found",
         )
     await db.delete(session)
+
+
+@router.patch(
+    "/{session_id}",
+    response_model=SessionResponse,
+    summary="Update a pentest session (status, config)",
+)
+async def update_session(
+    session_id: uuid.UUID,
+    payload: SessionUpdate,
+    db: AsyncSession = Depends(get_db),
+) -> PentestSession:
+    """Partially update a pentest session."""
+    result = await db.execute(
+        select(PentestSession).where(PentestSession.id == session_id)
+    )
+    session = result.scalar_one_or_none()
+    if session is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Session {session_id} not found",
+        )
+    if payload.status is not None:
+        session.status = payload.status
+    if payload.config is not None:
+        session.config = payload.config
+    await db.flush()
+    await db.refresh(session)
+    return session
