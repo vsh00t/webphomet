@@ -96,8 +96,9 @@ METHOD_HANDLERS: dict[str, Any] = {
         offset=p.get("offset", 0),
     ),
     "create_finding": lambda p: caido_server.create_finding(
-        request_id=p["request_id"],
         title=p["title"],
+        request_id=p.get("request_id"),
+        host=p.get("host"),
         description=p.get("description"),
         reporter=p.get("reporter", "webphomet"),
         dedupe_key=p.get("dedupe_key"),

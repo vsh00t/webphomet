@@ -386,6 +386,17 @@ async def _caido_create_finding(
     await dal.start_tool_run(db, tool_run.id)
     await db.commit()
 
+    # Resolve target host so MCP can auto-find a request_id if needed
+    target_host: str | None = None
+    if not request_id:
+        session = await dal.get_session(db, sid)
+        if session and session.target_base_url:
+            from urllib.parse import urlparse
+            parsed = urlparse(session.target_base_url)
+            target_host = parsed.hostname
+            if parsed.port and parsed.port not in (80, 443):
+                target_host = f"{target_host}:{parsed.port}"
+
     task = celery_app.send_task(
         "jobs.caido_call",
         kwargs={
@@ -396,6 +407,7 @@ async def _caido_create_finding(
                 "title": title,
                 "description": description,
                 "request_id": request_id,
+                "host": target_host,
                 "reporter": "webphomet",
             },
         },

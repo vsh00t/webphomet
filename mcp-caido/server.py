@@ -99,24 +99,84 @@ class CaidoServer:
 
     async def create_finding(
         self,
-        request_id: str,
         title: str,
+        request_id: str | None = None,
+        host: str | None = None,
         description: str | None = None,
         reporter: str = "webphomet",
         dedupe_key: str | None = None,
     ) -> dict[str, Any]:
         """Create a finding in Caido (push from WebPhomet → Caido).
 
-        ``request_id`` is **required** — Caido links every finding to a request.
+        Caido requires every finding to be linked to a request.  When
+        ``request_id`` is not supplied we auto-resolve one:
+
+        1. Query Caido for existing requests to ``host``.
+        2. If none exist, send a lightweight GET through replay.
+        3. Use the resulting request ID.
         """
+        resolved_id = request_id
+
+        if not resolved_id and host:
+            resolved_id = await self._resolve_request_id(host)
+
+        if not resolved_id:
+            return {
+                "error": (
+                    "Cannot create Caido finding: no request_id provided "
+                    "and could not auto-resolve one for the target host."
+                ),
+            }
+
         finding = await self.client.create_finding(
-            request_id=request_id,
+            request_id=resolved_id,
             title=title,
             reporter=reporter,
             description=description,
             dedupe_key=dedupe_key,
         )
         return {"finding": finding}
+
+    async def _resolve_request_id(self, host: str) -> str | None:
+        """Try to find an existing Caido request for *host*, or create one."""
+        # 1. Check existing requests
+        try:
+            result = await self.client.get_requests_by_offset(
+                limit=1, offset=0, host_filter=host,
+            )
+            edges = result.get("edges", [])
+            if edges:
+                rid = edges[0]["node"]["id"]
+                logger.info("Auto-resolved request_id=%s for host %s", rid, host)
+                return str(rid)
+        except Exception as exc:
+            logger.warning("Failed to query requests for %s: %s", host, exc)
+
+        # 2. Send a lightweight GET through Caido replay
+        try:
+            import urllib.parse as _up
+            is_tls = True
+            port = 443
+            # host may include port (e.g. "example.com:8080")
+            if ":" in host:
+                h, p = host.rsplit(":", 1)
+                if p.isdigit():
+                    host = h
+                    port = int(p)
+                    is_tls = port == 443
+
+            raw_req = f"GET / HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\n\r\n"
+            resp = await self.client.send_request(
+                raw_request=raw_req, host=host, port=port, is_tls=is_tls,
+            )
+            rid = resp.get("id")
+            if rid:
+                logger.info("Created replay request %s for host %s", rid, host)
+                return str(rid)
+        except Exception as exc:
+            logger.warning("Failed to send replay request for %s: %s", host, exc)
+
+        return None
 
     async def sync_findings_to_caido(
         self,
