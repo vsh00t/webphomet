@@ -42,11 +42,18 @@ class Settings(BaseSettings):
     SAFE_MODE: bool = True
     MAX_PARALLELISM: int = 5
 
+    # ── Security ──────────────────────────────────────────
+    API_KEY: str = ""  # Set to enable API key auth (X-API-Key header)
+
     # ── Logging ──────────────────────────────────────────
     LOG_LEVEL: str = "INFO"
 
     # ── CORS ─────────────────────────────────────────────
-    CORS_ORIGINS: list[str] = ["http://localhost:3000", "http://localhost:8000"]
+    CORS_ORIGINS: list[str] = [
+        "http://localhost:3000",
+        "http://localhost:3001",
+        "http://localhost:8000",
+    ]
 
 
 settings = Settings()

@@ -2,7 +2,7 @@
 
 WebPhomet is an AI-driven pentesting orchestration platform that leverages an LLM agent (Z.ai) to coordinate security tools through the Model Context Protocol (MCP), automate reconnaissance, vulnerability discovery, exploitation analysis, and report generation — all constrained by strict scope policies.
 
-**9 Docker services** · **46 tools** · **16 Celery task types** · **8 breakpoint phases** · **WebSocket real-time** · **48 tests**
+**9 Docker services** · **46 tools** · **16 Celery task types** · **8 breakpoint phases** · **WebSocket real-time** · **~120 tests**
 
 ---
 
@@ -39,12 +39,13 @@ WebPhomet is an AI-driven pentesting orchestration platform that leverages an LL
 | **MCP Gateway** | JSON-RPC 2.0 proxy to 4 MCP servers (CLI-Security, Caido, DevTools, Git/Code) |
 | **46 Security Tools** | Nmap, Nuclei, SQLMap, ffuf, Dalfox, httpx, Subfinder, Schemathesis + custom |
 | **Code-Aware Scanning** | Git repo cloning, source code analysis, 7 vuln categories, 50+ regex patterns |
-| **Mobile Testing** | Caido proxy integration, traffic analysis, sensitive data detection |
+| **Correlation Engine** | Links static code hotspots to dynamic findings with 4-factor confidence scoring |
+| **Mobile Testing** | Android/iOS emulator integration, Caido proxy, traffic analysis, CA cert install |
 | **Interactive Breakpoints** | 8 configurable phases, per-tool/severity breaks, auto-approve timeout |
-| **React Dashboard** | Real-time session monitoring, findings table, breakpoint approval UI |
+| **React Dashboard** | Real-time session monitoring, findings table, correlations view, breakpoint approval UI |
 | **Scope Enforcement** | Whitelist hosts/IPs, block RFC1918, validate all tool commands |
 | **Data Retention** | Configurable purge policy (RETENTION_DAYS), artifact file cleanup |
-| **Security Hardened** | Non-root containers, safe mode, parallelism limits |
+| **Security Hardened** | Non-root containers, safe mode, rate limiting, API key auth, security headers, input sanitisation |
 | **OWASP Mapping** | Findings mapped to OWASP Top 10 with CVSS scoring |
 | **Report Generation** | HTML/PDF reports with executive summary, findings, evidence, PoC |
 
@@ -118,17 +119,45 @@ docker compose -f targets/docker-compose.targets.yml up -d
 ### Findings
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| GET | `/api/v1/findings/?session_id={id}` | List findings |
+| GET | `/api/v1/findings/session/{id}` | List findings by session |
+| GET | `/api/v1/findings/session/{id}/summary` | Finding statistics |
 | POST | `/api/v1/findings/` | Create finding |
 
 ### Agent
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| POST | `/api/v1/agent/run` | Launch autonomous agent |
-| GET | `/api/v1/agent/status/{session_id}` | Agent status |
+| POST | `/api/v1/agent/start` | Launch autonomous agent |
+| GET | `/api/v1/agent/status/{task_id}` | Agent status |
+| POST | `/api/v1/agent/stop/{task_id}` | Stop agent |
 
-### Tools (12 endpoints)
-`/api/v1/tools/{clone-repo,code-audit,search-code,find-hotspots,git-log,git-diff,git-blame,git-tree,git-file,list-repos,analyze-mobile-traffic}`
+### Tools
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/api/v1/tools/run` | Execute tool (async Celery) |
+| POST | `/api/v1/tools/recon` | Parallel recon sweep |
+| GET | `/api/v1/tools/session/{id}` | List tool runs by session |
+| GET | `/api/v1/tools/task/{id}/status` | Celery task status |
+| GET | `/api/v1/tools/{tool_run_id}` | Tool run detail |
+| GET | `/api/v1/tools/mobile/emulator-status` | Mobile emulator status |
+| POST | `/api/v1/tools/mobile/start-emulator` | Start mobile emulator |
+
+### Git / Code Analysis
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/api/v1/git-code/clone-repo` | Clone Git repository |
+| GET | `/api/v1/git-code/list-repos` | List cloned repos |
+| POST | `/api/v1/git-code/code-audit` | Run code audit |
+| POST | `/api/v1/git-code/search-code` | Search code patterns |
+| POST | `/api/v1/git-code/find-hotspots` | Find vulnerability hotspots |
+| POST | `/api/v1/git-code/git-{log,diff,blame,tree,file}` | Git operations |
+
+### Correlations
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/api/v1/correlations/run` | Run correlation engine |
+| GET | `/api/v1/correlations/session/{id}` | List correlations |
+| GET | `/api/v1/correlations/finding/{id}` | Correlations for finding |
+| DELETE | `/api/v1/correlations/session/{id}` | Clear correlations |
 
 ### Breakpoints
 | Method | Endpoint | Description |
@@ -179,7 +208,7 @@ uvicorn src.main:app --reload --port 8000
 cd frontend
 npm install && npm run dev    # http://localhost:3001
 
-# Tests (48 tests)
+# Tests (~120 tests across 14 modules)
 cd backend && pytest tests/ -v
 ```
 
@@ -191,13 +220,14 @@ cd backend && pytest tests/ -v
 webphomet/
 ├── backend/                  # FastAPI + Celery
 │   ├── src/
-│   │   ├── api/              # REST: sessions, findings, tools, agent, breakpoints, admin
+│   │   ├── api/              # REST: sessions, findings, tools, git-code, correlations, agent, breakpoints, admin
 │   │   ├── agent/            # LLM orchestrator, 46 tools, executor
-│   │   ├── core/             # Breakpoints, WS manager, retention, logging
-│   │   ├── db/               # SQLAlchemy models (5 tables)
+│   │   ├── core/             # Security, correlator, breakpoints, WS manager, retention, logging
+│   │   ├── db/               # SQLAlchemy models (6 tables), DAL, persistence
 │   │   ├── jobs/             # 16 Celery tasks, MCP gateway
+│   │   ├── services/         # Mobile emulator integration
 │   │   └── reporting/        # HTML/PDF (Jinja2 + WeasyPrint)
-│   └── tests/                # 48 pytest tests (7 modules)
+│   └── tests/                # ~120 pytest tests (14 modules)
 ├── frontend/                 # React 18 + TypeScript + Tailwind
 │   ├── src/{pages,components,hooks,lib,types}/
 │   ├── Dockerfile            # Multi-stage node→nginx
@@ -206,7 +236,7 @@ webphomet/
 ├── mcp-caido/                # Caido GraphQL MCP
 ├── mcp-devtools/             # Headless Chrome MCP (Playwright)
 ├── mcp-git-code/             # Git/Code analysis MCP
-├── docs/                     # Mobile setup guide
+├── docs/                     # API, Security, Deployment, mobile setup
 ├── scripts/                  # CA cert installer
 ├── targets/                  # Vulnerable apps (DVWA, Juice Shop)
 ├── docker-compose.yml        # 9-service orchestration
@@ -227,6 +257,13 @@ webphomet/
 | test_config.py | 2 | Settings defaults and fields |
 | test_ws_manager.py | 2 | WebSocket connection manager |
 | test_health.py | 1 | Health endpoint |
+| test_correlator.py | 12 | Correlation engine (category, path, keyword, confidence) |
+| test_dal.py | 18 | DAL CRUD (all 6 models) |
+| test_git_code.py | 12 | Git-code endpoints + routing regression |
+| test_mobile_emulator.py | 6 | Mobile emulator module |
+| test_correlations_api.py | 5 | Correlations API |
+| test_executor.py | 6 | Agent executor dispatch |
+| test_security.py | 11 | Security middleware, sanitisation, rate limiting |
 
 ---
 
@@ -240,10 +277,24 @@ webphomet/
 | `ZAI_MODEL` | No | `glm-5` | LLM model |
 | `CAIDO_API_URL` | No | `http://host.docker.internal:8088` | Caido proxy URL |
 | `CAIDO_AUTH_TOKEN` | No | — | Caido auth token |
+| `API_KEY` | No | — | Enable API key auth (X-API-Key header) |
 | `SAFE_MODE` | No | `true` | Restrict destructive operations |
 | `MAX_PARALLELISM` | No | `5` | Max concurrent tasks |
 | `RETENTION_DAYS` | No | `30` | Auto-purge threshold |
-| `CORS_ORIGINS` | No | `localhost:3000,8000` | Allowed CORS origins |
+| `CORS_ORIGINS` | No | `localhost:3000,3001,8000` | Allowed CORS origins |
+
+---
+
+## Documentation
+
+| Doc | Description |
+|-----|-------------|
+| [docs/API.md](docs/API.md) | Full REST API reference |
+| [docs/SECURITY.md](docs/SECURITY.md) | Security model & hardening guide |
+| [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) | Production deployment guide |
+| [docs/mobile-setup.md](docs/mobile-setup.md) | Mobile emulator setup |
+| [ARCHITECTURE.md](ARCHITECTURE.md) | Architecture deep-dive |
+| [CHANGELOG.md](CHANGELOG.md) | Implementation history |
 
 ---
 

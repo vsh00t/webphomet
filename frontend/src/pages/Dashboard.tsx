@@ -106,6 +106,10 @@ export default function Dashboard() {
                         style={{ background: 'var(--bg-card)', color: 'var(--text-secondary)' }}>
                     Findings
                   </Link>
+                  <Link to={`/correlations/${s.id}`} className="px-2 py-1 rounded text-xs"
+                        style={{ background: 'var(--bg-card)', color: 'var(--text-secondary)' }}>
+                    Correlations
+                  </Link>
                   <Link to={`/config/${s.id}`} className="px-2 py-1 rounded text-xs"
                         style={{ background: 'var(--bg-card)', color: 'var(--text-secondary)' }}>
                     Config

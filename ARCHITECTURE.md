@@ -50,6 +50,10 @@ La arquitectura sigue un modelo de **orquestador central + workers + MCP servers
 | `backend` | 8000 | `python:3.12-slim` (custom) | `curl http://localhost:8000/health` |
 | `celery-worker` | — | misma imagen que backend | — |
 | `mcp-cli-security` | 9100 | `python:3.12-slim` + Go tools (custom) | `curl http://localhost:9100/health` |
+| `mcp-caido` | 9200 | `python:3.12-slim` (custom) | `curl http://localhost:9200/health` |
+| `mcp-devtools` | 9300 | `python:3.12-slim` + Playwright (custom) | `curl http://localhost:9300/health` |
+| `mcp-git-code` | 9400 | `python:3.12-slim` + git (custom) | `curl http://localhost:9400/health` |
+| `frontend` | 3001 | `node:20` → `nginx:alpine` (multi-stage) | `curl http://localhost:80` |
 
 Red compartida: `webphomet-net` (bridge).  
 Volúmenes: `postgres-data`, `redis-data`, `artifacts` (compartido backend↔celery↔mcp).
@@ -91,10 +95,12 @@ Volúmenes: `postgres-data`, `redis-data`, `artifacts` (compartido backend↔cel
 
 | Archivo | Endpoints | Tarea |
 |---------|-----------|-------|
-| `router.py` | Agrega sub-routers bajo `/api/v1` | — |
+| `router.py` | Agrega 8 sub-routers bajo `/api/v1` | — |
 | `sessions.py` | `POST /sessions`, `GET /sessions`, `GET /sessions/{id}`, `DELETE /sessions/{id}` | 1.2.1 |
 | `findings.py` | `POST /findings`, `GET /findings/session/{id}`, `GET /findings/session/{id}/summary` | 1.2.3 |
-| `tools.py` | `POST /tools/run` (single tool + safe mode), `POST /tools/recon` (parallel sweep), `GET /tools/session/{id}`, `GET /tools/{id}`, `GET /tools/task/{id}/status` | 1.2.2, 1.4.6 |
+| `tools.py` | `POST /tools/run`, `POST /tools/recon`, `GET /tools/session/{id}`, `GET /tools/{id}`, mobile emulator endpoints | 1.2.2, 1.4.6 |
+| `git_code.py` | `POST /clone-repo`, `/code-audit`, `/search-code`, `/find-hotspots`, git ops; `GET /list-repos` | 3.x |
+| `correlations.py` | `POST /run`, `GET /session/{id}`, `GET /finding/{id}`, `DELETE /session/{id}` | 3.x |
 | `agent.py` | `POST /agent/start`, `GET /agent/status/{task_id}`, `POST /agent/stop/{task_id}` | 1.4.5 |
 
 #### `db/` — Capa de datos
@@ -102,9 +108,9 @@ Volúmenes: `postgres-data`, `redis-data`, `artifacts` (compartido backend↔cel
 | Archivo | Descripción | Tarea |
 |---------|-------------|-------|
 | `database.py` (62 líneas) | `create_async_engine`, `async_sessionmaker`, `get_db` (dependency) | 1.1.5 |
-| `models.py` (234 líneas) | ORM: `PentestSession`, `Target`, `Finding`, `Artifact`, `ToolRun` con enums (`Severity`, `FindingStatus`, `RunStatus`, `SessionStatus`), relationships, columnas JSON | 1.1.5 |
-| `dal.py` (413 líneas) | CRUD completo: `create_session`, `get_session` (eager load), `list_sessions`, `upsert_target` (merge ports/tech por host), `create_finding`, `get_findings` (filtered), `get_findings_summary`, `create_tool_run`, `start_tool_run`, `complete_tool_run`, `get_tool_runs`, `create_artifact`, `get_artifacts` | 1.2.3 |
-| `persistence.py` (254 líneas) | Puente tool output → parsers → DB. `persist_tool_result()`: completa ToolRun, almacena raw artifact, parsea output, almacena parsed artifact, extrae entidades (targets de nmap/subfinder/httpx/whatweb, findings de nuclei) | 1.3.4 |
+| `models.py` (~260 líneas) | ORM: `PentestSession`, `Target`, `Finding`, `Artifact`, `ToolRun`, `Correlation` con enums (`Severity`, `FindingStatus`, `RunStatus`, `SessionStatus`), relationships, columnas JSON | 1.1.5 |
+| `dal.py` (~460 líneas) | CRUD completo: sessions, targets, findings, tool_runs, artifacts, correlations. Incluye `upsert_target` merge, `get_findings_summary`, `create_correlation`, `get_correlations` | 1.2.3 |
+| `persistence.py` (254 líneas) | Puente tool output → parsers → DB. `persist_tool_result()` | 1.3.4 |
 
 #### `parsers/` — Parseadores de output de herramientas
 
@@ -133,9 +139,17 @@ Todos los parsers implementan `.to_dict()` y `.to_summary()`. Nuclei adicional: 
 | Archivo | Descripción | Tarea |
 |---------|-------------|-------|
 | `schemas.py` (171 líneas) | Pydantic schemas: `EndpointDescriptor`, `FindingCreate/Response`, `SessionCreate/Response`, `ToolRunCreate/Response`, enums espejo de DB | — |
-| `scope.py` (136 líneas) | `ScopeValidator` backend-side: `validate_target()` (host patterns, IP/CIDR), `validate_command()` (inspecciona flags `-t`, `-u`, `-h`, etc.) | 1.3.2 |
-| `safe_mode.py` (218 líneas) | `SafeModePolicy.check()`: bloquea tools destructivos (`sqlmap`, `dalfox`, `kxss`), patrones de args peligrosos (--os-shell, --exploit, nmap scripts brute/dos/fuzzer, nuclei exploit templates), rate limiter in-memory (60/hr/session). Retorna `PolicyResult` con `.enforce()` | 1.4.6 |
+| `scope.py` (136 líneas) | `ScopeValidator` backend-side: `validate_target()` (host patterns, IP/CIDR), `validate_command()` (inspecciona flags) | 1.3.2 |
+| `safe_mode.py` (218 líneas) | `SafeModePolicy.check()`: bloquea tools destructivos, patrones peligrosos, rate limiter 60/hr/session | 1.4.6 |
+| `security.py` (~200 líneas) | Security middleware: `APIKeyMiddleware`, `RateLimitMiddleware`, `SecurityHeadersMiddleware`, `RequestSizeLimitMiddleware`, `sanitize_tool_arg()`, `mask_secret()` | — |
+| `correlator.py` (~265 líneas) | Correlation engine: 4-factor scoring (category 0.55, path 0.15, keyword 0.15, severity 0.05), 7 vuln categories | — |
 | `logging.py` | Structured JSON logging con `python-json-logger` | 1.2.5 |
+
+#### `services/` — Integraciones externas
+
+| Archivo | Descripción | Tarea |
+|---------|-------------|-------|
+| `mobile_emulator.py` (~240 líneas) | Android (emulator/ADB) e iOS (xcrun/simctl) management: start, proxy config, CA cert install | — |
 
 #### `jobs/` — Celery tasks
 
@@ -251,13 +265,16 @@ El rate limiter usa sliding window (60 invocaciones/hr/sesión) en memoria Pytho
 │ pentest_sessions │──1:N──│    targets     │
 │                  │       └────────────────┘
 │  id (UUID PK)   │       ┌────────────────┐
-│  target_base_url │──1:N──│   findings     │
-│  app_type        │       └────────────────┘
-│  scope (JSONB)   │       ┌────────────────┐
-│  config (JSONB)  │──1:N──│   tool_runs    │──1:N──┐
+│  target_base_url │──1:N──│   findings     │──1:N──┐
+│  app_type        │       └────────────────┘       │
+│  scope (JSONB)   │       ┌────────────────┐       │
+│  config (JSONB)  │──1:N──│   tool_runs    │──1:N──┤
 │  status (enum)   │       └────────────────┘       │
 │  created_at      │       ┌────────────────┐       │
 │  updated_at      │──1:N──│   artifacts    │◄──────┘
+│                  │       └────────────────┘
+│                  │       ┌────────────────┐
+│                  │──1:N──│  correlations  │──N:1──findings
 └─────────────────┘       └────────────────┘
 ```
 

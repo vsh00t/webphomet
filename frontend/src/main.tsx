@@ -8,6 +8,7 @@ import Dashboard from './pages/Dashboard';
 import SessionDetail from './pages/SessionDetail';
 import Findings from './pages/Findings';
 import Config from './pages/Config';
+import Correlations from './pages/Correlations';
 
 const qc = new QueryClient({
   defaultOptions: { queries: { refetchInterval: 5000, staleTime: 2000 } },
@@ -22,6 +23,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
             <Route path="/" element={<Dashboard />} />
             <Route path="/session/:id" element={<SessionDetail />} />
             <Route path="/findings/:sessionId" element={<Findings />} />
+            <Route path="/correlations/:sessionId" element={<Correlations />} />
             <Route path="/config/:sessionId" element={<Config />} />
           </Route>
         </Routes>

@@ -17,6 +17,7 @@ from sqlalchemy.orm import selectinload
 
 from src.db.models import (
     Artifact,
+    Correlation,
     Finding,
     FindingStatus,
     PentestSession,
@@ -462,3 +463,84 @@ async def get_artifacts(
     stmt = stmt.order_by(Artifact.created_at.desc())
     result = await db.execute(stmt)
     return result.scalars().all()
+
+
+# ═══════════════════════════════════════════════════════════════
+# Correlations (hotspot ↔ finding)
+# ═══════════════════════════════════════════════════════════════
+
+
+async def create_correlation(
+    db: AsyncSession,
+    *,
+    session_id: uuid.UUID,
+    finding_id: uuid.UUID,
+    repo_name: str,
+    hotspot_file: str,
+    hotspot_line: int,
+    hotspot_category: str,
+    hotspot_snippet: str | None = None,
+    confidence: float = 0.5,
+    correlation_type: str = "category_match",
+    notes: str | None = None,
+) -> Correlation:
+    """Insert a new correlation linking a hotspot to a finding."""
+    corr = Correlation(
+        session_id=session_id,
+        finding_id=finding_id,
+        repo_name=repo_name,
+        hotspot_file=hotspot_file,
+        hotspot_line=hotspot_line,
+        hotspot_category=hotspot_category,
+        hotspot_snippet=hotspot_snippet,
+        confidence=confidence,
+        correlation_type=correlation_type,
+        notes=notes,
+    )
+    db.add(corr)
+    await db.flush()
+    await db.refresh(corr)
+    return corr
+
+
+async def get_correlations(
+    db: AsyncSession,
+    session_id: uuid.UUID,
+    *,
+    min_confidence: float = 0.0,
+) -> Sequence[Correlation]:
+    """Fetch correlations for a session, optionally filtered by confidence."""
+    stmt = (
+        select(Correlation)
+        .where(Correlation.session_id == session_id)
+        .where(Correlation.confidence >= min_confidence)
+        .order_by(Correlation.confidence.desc())
+    )
+    result = await db.execute(stmt)
+    return result.scalars().all()
+
+
+async def get_correlations_for_finding(
+    db: AsyncSession,
+    finding_id: uuid.UUID,
+) -> Sequence[Correlation]:
+    """Fetch all correlations for a specific finding."""
+    result = await db.execute(
+        select(Correlation)
+        .where(Correlation.finding_id == finding_id)
+        .order_by(Correlation.confidence.desc())
+    )
+    return result.scalars().all()
+
+
+async def delete_correlations_for_session(
+    db: AsyncSession,
+    session_id: uuid.UUID,
+) -> int:
+    """Delete all correlations for a session. Returns count deleted."""
+    from sqlalchemy import delete as sa_delete
+    result = await db.execute(
+        sa_delete(Correlation).where(Correlation.session_id == session_id)
+    )
+    await db.flush()
+    return result.rowcount  # type: ignore[return-value]

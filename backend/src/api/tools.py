@@ -257,25 +257,6 @@ async def list_tool_runs(
 
 
 @router.get(
-    "/{tool_run_id}",
-    response_model=ToolRunResponse,
-    summary="Get a specific tool run",
-)
-async def get_tool_run(
-    tool_run_id: uuid.UUID,
-    db: AsyncSession = Depends(get_db),
-) -> ToolRunResponse:
-    """Return a single tool run by ID."""
-    run = await dal.get_tool_run(db, tool_run_id)
-    if run is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Tool run {tool_run_id} not found",
-        )
-    return ToolRunResponse.model_validate(run)
-
-
-@router.get(
     "/task/{task_id}/status",
     summary="Check Celery task status",
 )
@@ -793,297 +774,6 @@ async def run_ssrf_tests(
 
 
 # ═══════════════════════════════════════════════════════════════
-# Git/Code — Source-code analysis endpoints (Phase 3.1)
-# ═══════════════════════════════════════════════════════════════
-
-
-class CloneRepoRequest(BaseModel):
-    session_id: uuid.UUID
-    url: str
-    name: str | None = None
-
-
-class CodeAuditRequest(BaseModel):
-    session_id: uuid.UUID
-    repo_url: str | None = None
-    repo_name: str | None = None
-    categories: list[str] | None = None
-
-
-class SearchCodeRequest(BaseModel):
-    session_id: uuid.UUID
-    repo_name: str
-    query: str
-    is_regex: bool = False
-    file_pattern: str = "*"
-
-
-class FindHotspotsRequest(BaseModel):
-    session_id: uuid.UUID
-    repo_name: str
-    categories: list[str] | None = None
-
-
-class GitLogRequest(BaseModel):
-    session_id: uuid.UUID
-    repo_name: str
-    max_count: int = 20
-    file_path: str | None = None
-
-
-class GitDiffRequest(BaseModel):
-    session_id: uuid.UUID
-    repo_name: str
-    commit_a: str = "HEAD~1"
-    commit_b: str = "HEAD"
-
-
-class GitBlameRequest(BaseModel):
-    session_id: uuid.UUID
-    repo_name: str
-    file_path: str
-    start_line: int = 1
-    end_line: int = 50
-
-
-class GetTreeRequest(BaseModel):
-    session_id: uuid.UUID
-    repo_name: str
-    path: str = ""
-    max_depth: int = 3
-
-
-class GetFileRequest(BaseModel):
-    session_id: uuid.UUID
-    repo_name: str
-    file_path: str
-    start_line: int = 1
-    end_line: int | None = None
-
-
-@router.post("/clone-repo")
-async def clone_repo(
-    payload: CloneRepoRequest, db: AsyncSession = Depends(get_db),
-) -> dict[str, Any]:
-    tool_run = await dal.create_tool_run(
-        db, session_id=payload.session_id, tool_name="git_clone_repo",
-        command=f"git clone {payload.url}",
-    )
-    await dal.start_tool_run(db, tool_run.id)
-    await db.commit()
-    task = celery_app.send_task(
-        "jobs.git_code_call",
-        kwargs={
-            "session_id": str(payload.session_id), "tool_run_id": str(tool_run.id),
-            "method": "clone_repo", "params": {"url": payload.url, "name": payload.name},
-        },
-    )
-    return {"tool_run_id": str(tool_run.id), "task_id": task.id, "status": "submitted"}
-
-
-@router.post("/code-audit")
-async def run_code_audit_endpoint(
-    payload: CodeAuditRequest, db: AsyncSession = Depends(get_db),
-) -> dict[str, Any]:
-    tool_run = await dal.create_tool_run(
-        db, session_id=payload.session_id, tool_name="code_audit",
-        command=f"code_audit {payload.repo_url or payload.repo_name}",
-    )
-    await dal.start_tool_run(db, tool_run.id)
-    await db.commit()
-    task = celery_app.send_task(
-        "jobs.run_code_audit",
-        kwargs={
-            "session_id": str(payload.session_id), "tool_run_id": str(tool_run.id),
-            "repo_url": payload.repo_url, "repo_name": payload.repo_name,
-            "categories": payload.categories,
-        },
-    )
-    return {"tool_run_id": str(tool_run.id), "task_id": task.id, "status": "submitted"}
-
-
-@router.post("/search-code")
-async def search_code_endpoint(
-    payload: SearchCodeRequest, db: AsyncSession = Depends(get_db),
-) -> dict[str, Any]:
-    tool_run = await dal.create_tool_run(
-        db, session_id=payload.session_id, tool_name="git_search_code",
-        command=f"search {payload.repo_name} '{payload.query}'",
-    )
-    await dal.start_tool_run(db, tool_run.id)
-    await db.commit()
-    task = celery_app.send_task(
-        "jobs.git_code_call",
-        kwargs={
-            "session_id": str(payload.session_id), "tool_run_id": str(tool_run.id),
-            "method": "search_code",
-            "params": {
-                "repo_name": payload.repo_name, "query": payload.query,
-                "is_regex": payload.is_regex, "file_pattern": payload.file_pattern,
-            },
-        },
-    )
-    return {"tool_run_id": str(tool_run.id), "task_id": task.id, "status": "submitted"}
-
-
-@router.post("/find-hotspots")
-async def find_hotspots_endpoint(
-    payload: FindHotspotsRequest, db: AsyncSession = Depends(get_db),
-) -> dict[str, Any]:
-    tool_run = await dal.create_tool_run(
-        db, session_id=payload.session_id, tool_name="git_find_hotspots",
-        command=f"hotspots {payload.repo_name}",
-    )
-    await dal.start_tool_run(db, tool_run.id)
-    await db.commit()
-    task = celery_app.send_task(
-        "jobs.git_code_call",
-        kwargs={
-            "session_id": str(payload.session_id), "tool_run_id": str(tool_run.id),
-            "method": "find_hotspots",
-            "params": {"repo_name": payload.repo_name, "categories": payload.categories},
-        },
-    )
-    return {"tool_run_id": str(tool_run.id), "task_id": task.id, "status": "submitted"}
-
-
-@router.post("/git-log")
-async def git_log_endpoint(
-    payload: GitLogRequest, db: AsyncSession = Depends(get_db),
-) -> dict[str, Any]:
-    tool_run = await dal.create_tool_run(
-        db, session_id=payload.session_id, tool_name="git_log",
-        command=f"git log {payload.repo_name}",
-    )
-    await dal.start_tool_run(db, tool_run.id)
-    await db.commit()
-    params: dict[str, Any] = {"repo_name": payload.repo_name, "max_count": payload.max_count}
-    if payload.file_path:
-        params["file_path"] = payload.file_path
-    task = celery_app.send_task(
-        "jobs.git_code_call",
-        kwargs={
-            "session_id": str(payload.session_id), "tool_run_id": str(tool_run.id),
-            "method": "git_log", "params": params,
-        },
-    )
-    return {"tool_run_id": str(tool_run.id), "task_id": task.id, "status": "submitted"}
-
-
-@router.post("/git-diff")
-async def git_diff_endpoint(
-    payload: GitDiffRequest, db: AsyncSession = Depends(get_db),
-) -> dict[str, Any]:
-    tool_run = await dal.create_tool_run(
-        db, session_id=payload.session_id, tool_name="git_diff",
-        command=f"git diff {payload.repo_name}",
-    )
-    await dal.start_tool_run(db, tool_run.id)
-    await db.commit()
-    task = celery_app.send_task(
-        "jobs.git_code_call",
-        kwargs={
-            "session_id": str(payload.session_id), "tool_run_id": str(tool_run.id),
-            "method": "git_diff",
-            "params": {"repo_name": payload.repo_name, "commit_a": payload.commit_a, "commit_b": payload.commit_b},
-        },
-    )
-    return {"tool_run_id": str(tool_run.id), "task_id": task.id, "status": "submitted"}
-
-
-@router.post("/git-blame")
-async def git_blame_endpoint(
-    payload: GitBlameRequest, db: AsyncSession = Depends(get_db),
-) -> dict[str, Any]:
-    tool_run = await dal.create_tool_run(
-        db, session_id=payload.session_id, tool_name="git_blame",
-        command=f"git blame {payload.repo_name}/{payload.file_path}",
-    )
-    await dal.start_tool_run(db, tool_run.id)
-    await db.commit()
-    task = celery_app.send_task(
-        "jobs.git_code_call",
-        kwargs={
-            "session_id": str(payload.session_id), "tool_run_id": str(tool_run.id),
-            "method": "git_blame",
-            "params": {
-                "repo_name": payload.repo_name, "file_path": payload.file_path,
-                "start_line": payload.start_line, "end_line": payload.end_line,
-            },
-        },
-    )
-    return {"tool_run_id": str(tool_run.id), "task_id": task.id, "status": "submitted"}
-
-
-@router.post("/git-tree")
-async def git_tree_endpoint(
-    payload: GetTreeRequest, db: AsyncSession = Depends(get_db),
-) -> dict[str, Any]:
-    tool_run = await dal.create_tool_run(
-        db, session_id=payload.session_id, tool_name="git_get_tree",
-        command=f"git tree {payload.repo_name}",
-    )
-    await dal.start_tool_run(db, tool_run.id)
-    await db.commit()
-    task = celery_app.send_task(
-        "jobs.git_code_call",
-        kwargs={
-            "session_id": str(payload.session_id), "tool_run_id": str(tool_run.id),
-            "method": "get_tree",
-            "params": {"repo_name": payload.repo_name, "path": payload.path, "max_depth": payload.max_depth},
-        },
-    )
-    return {"tool_run_id": str(tool_run.id), "task_id": task.id, "status": "submitted"}
-
-
-@router.post("/git-file")
-async def git_file_endpoint(
-    payload: GetFileRequest, db: AsyncSession = Depends(get_db),
-) -> dict[str, Any]:
-    tool_run = await dal.create_tool_run(
-        db, session_id=payload.session_id, tool_name="git_get_file",
-        command=f"git file {payload.repo_name}/{payload.file_path}",
-    )
-    await dal.start_tool_run(db, tool_run.id)
-    await db.commit()
-    params: dict[str, Any] = {
-        "repo_name": payload.repo_name, "file_path": payload.file_path,
-        "start_line": payload.start_line,
-    }
-    if payload.end_line is not None:
-        params["end_line"] = payload.end_line
-    task = celery_app.send_task(
-        "jobs.git_code_call",
-        kwargs={
-            "session_id": str(payload.session_id), "tool_run_id": str(tool_run.id),
-            "method": "get_file", "params": params,
-        },
-    )
-    return {"tool_run_id": str(tool_run.id), "task_id": task.id, "status": "submitted"}
-
-
-@router.get("/list-repos")
-async def list_repos_endpoint(
-    session_id: uuid.UUID,
-    db: AsyncSession = Depends(get_db),
-) -> dict[str, Any]:
-    tool_run = await dal.create_tool_run(
-        db, session_id=session_id, tool_name="git_list_repos",
-        command="git list_repos",
-    )
-    await dal.start_tool_run(db, tool_run.id)
-    await db.commit()
-    task = celery_app.send_task(
-        "jobs.git_code_call",
-        kwargs={
-            "session_id": str(session_id), "tool_run_id": str(tool_run.id),
-            "method": "list_repos",
-        },
-    )
-    return {"tool_run_id": str(tool_run.id), "task_id": task.id, "status": "submitted"}
-
-
-# ═══════════════════════════════════════════════════════════════
 # Mobile traffic analysis (Phase 3.2)
 # ═══════════════════════════════════════════════════════════════
 
@@ -1112,3 +802,89 @@ async def analyze_mobile_traffic_endpoint(
         },
     )
     return {"tool_run_id": str(tool_run.id), "task_id": task.id, "status": "submitted"}
+
+
+# ═══════════════════════════════════════════════════════════════
+# Mobile Emulator Management
+# ═══════════════════════════════════════════════════════════════
+
+
+@router.get("/mobile/emulator-status", summary="Check mobile emulator availability")
+async def emulator_status() -> dict[str, Any]:
+    """Return available emulators, simulators, and prerequisites."""
+    from src.services.mobile_emulator import get_emulator_status
+    return await get_emulator_status()
+
+
+class StartEmulatorRequest(BaseModel):
+    platform: str = "android"
+    device_name: str
+    proxy_host: str = "127.0.0.1"
+    proxy_port: int = 8088
+    no_window: bool = True
+
+
+@router.post("/mobile/start-emulator", summary="Start a mobile emulator with proxy")
+async def start_emulator(payload: StartEmulatorRequest) -> dict[str, Any]:
+    """Boot a mobile emulator/simulator with traffic routed through Caido proxy."""
+    from src.services.mobile_emulator import (
+        start_android_emulator,
+        boot_ios_simulator,
+        configure_android_proxy,
+        configure_ios_proxy,
+        Platform,
+    )
+
+    if payload.platform == "android":
+        inst = await start_android_emulator(
+            avd_name=payload.device_name,
+            proxy_host=payload.proxy_host,
+            proxy_port=payload.proxy_port,
+            no_window=payload.no_window,
+        )
+        if inst.status != "error":
+            await configure_android_proxy(payload.proxy_host, payload.proxy_port)
+        return {
+            "platform": inst.platform.value,
+            "device": inst.device_name,
+            "status": inst.status,
+            "pid": inst.pid,
+            "error": inst.error,
+        }
+    elif payload.platform == "ios":
+        result = await boot_ios_simulator(payload.device_name)
+        if result["success"]:
+            proxy_result = await configure_ios_proxy(
+                payload.device_name, payload.proxy_host, payload.proxy_port,
+            )
+            result["proxy"] = proxy_result
+        return result
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Unsupported platform: {payload.platform}. Use 'android' or 'ios'.",
+        )
+
+
+# ---------------------------------------------------------------------------
+# Single tool-run lookup (MUST be last — catch-all path param)
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/{tool_run_id}",
+    response_model=ToolRunResponse,
+    summary="Get a specific tool run",
+)
+async def get_tool_run(
+    tool_run_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+) -> ToolRunResponse:
+    """Return a single tool run by ID."""
+    run = await dal.get_tool_run(db, tool_run_id)
+    if run is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Tool run {tool_run_id} not found",
+        )
+    return ToolRunResponse.model_validate(run)

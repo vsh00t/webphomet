@@ -62,3 +62,20 @@ export interface WsEvent {
   timestamp: string;
   data: Record<string, unknown>;
 }
+
+export interface Correlation {
+  id: string;
+  finding_id: string;
+  repo_name: string;
+  hotspot_file: string;
+  hotspot_line: number;
+  hotspot_category: string;
+  hotspot_snippet: string;
+  confidence: number;
+  correlation_type: string;
+  notes: string;
+  created_at: string;
+  /* Joined from finding (only on /run response) */
+  finding_title?: string;
+  finding_vuln_type?: string;
+}

@@ -9,6 +9,7 @@ from datetime import datetime
 from sqlalchemy import (
     DateTime,
     Enum,
+    Float,
     ForeignKey,
     Integer,
     String,
@@ -238,3 +239,40 @@ class ToolRun(Base):
     artifacts: Mapped[list[Artifact]] = relationship(
         back_populates="tool_run", cascade="all, delete-orphan"
     )
+
+
+class Correlation(Base):
+    """Links a static-code hotspot to a dynamic finding."""
+
+    __tablename__ = "correlations"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    session_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("pentest_sessions.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    finding_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("findings.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    repo_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    hotspot_file: Mapped[str] = mapped_column(String(2048), nullable=False)
+    hotspot_line: Mapped[int] = mapped_column(Integer, nullable=False)
+    hotspot_category: Mapped[str] = mapped_column(String(100), nullable=False)
+    hotspot_snippet: Mapped[str | None] = mapped_column(Text, nullable=True)
+    confidence: Mapped[float] = mapped_column(default=0.5)
+    correlation_type: Mapped[str] = mapped_column(
+        String(50), nullable=False, default="category_match",
+    )
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    # Relationships
+    session: Mapped[PentestSession] = relationship()
+    finding: Mapped[Finding] = relationship()

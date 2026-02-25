@@ -9,6 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from src.api.router import api_router
 from src.config import settings
 from src.core.logging import setup_logging
+from src.core.security import install_security_middleware
 from src.db.database import engine
 
 # ---------------------------------------------------------------------------
@@ -52,6 +53,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# -- Security middleware (after CORS, so pre-flight OPTIONS work) ----------
+install_security_middleware(app)
 
 # -- Routers ---------------------------------------------------------------
 app.include_router(api_router, prefix="/api/v1")

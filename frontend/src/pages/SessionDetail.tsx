@@ -56,7 +56,7 @@ export default function SessionDetail() {
   });
 
   const findings = findingsData?.findings ?? (Array.isArray(findingsData) ? findingsData : []);
-  const toolRuns = toolsData?.tool_runs ?? (Array.isArray(toolsData) ? toolsData : []);
+  const toolRuns = toolsData ?? (Array.isArray(toolsData) ? toolsData : []);
   const pending = bpData?.pending ?? [];
 
   const sevCounts = findings.reduce((acc: Record<string, number>, f: any) => {
@@ -219,11 +219,18 @@ export default function SessionDetail() {
           )}
         </div>
         {findings.length > 0 && (
-          <Link to={`/findings/${id}`}
-                className="block px-4 py-2 text-xs text-center"
-                style={{ borderTop: '1px solid var(--border)', color: 'var(--accent)' }}>
-            View all {findings.length} findings →
-          </Link>
+          <div className="flex">
+            <Link to={`/findings/${id}`}
+                  className="block px-4 py-2 text-xs text-center flex-1"
+                  style={{ borderTop: '1px solid var(--border)', color: 'var(--accent)' }}>
+              View all {findings.length} findings →
+            </Link>
+            <Link to={`/correlations/${id}`}
+                  className="block px-4 py-2 text-xs text-center flex-1"
+                  style={{ borderTop: '1px solid var(--border)', borderLeft: '1px solid var(--border)', color: 'var(--accent)' }}>
+              Code correlations →
+            </Link>
+          </div>
         )}
       </div>
     </div>

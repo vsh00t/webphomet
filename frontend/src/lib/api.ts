@@ -17,11 +17,13 @@ export const createSession = (body: { target: string; scope_regex?: string }) =>
 
 /* Findings */
 export const getFindings = (sessionId: string) =>
-  request<{ findings: any[] }>(`/findings/?session_id=${sessionId}`);
+  request<{ findings: any[] }>(`/findings/session/${sessionId}`);
+export const getFindingsSummary = (sessionId: string) =>
+  request<any>(`/findings/session/${sessionId}/summary`);
 
 /* Tool Runs */
 export const getToolRuns = (sessionId: string) =>
-  request<{ tool_runs: any[] }>(`/sessions/${sessionId}/tool-runs`);
+  request<any[]>(`/tools/session/${sessionId}`);
 
 /* Agent */
 export const startAgent = (sessionId: string) =>
@@ -45,3 +47,24 @@ export const buildReport = (sessionId: string) =>
     method: 'POST',
     body: JSON.stringify({ session_id: sessionId }),
   });
+
+/* Git/Code (now under /git-code/ prefix) */
+export const cloneRepo = (body: { session_id: string; url: string; name?: string }) =>
+  request<any>('/git-code/clone-repo', { method: 'POST', body: JSON.stringify(body) });
+export const listRepos = (sessionId: string) =>
+  request<any>(`/git-code/list-repos?session_id=${sessionId}`);
+export const findHotspots = (body: { session_id: string; repo_name: string; categories?: string[] }) =>
+  request<any>('/git-code/find-hotspots', { method: 'POST', body: JSON.stringify(body) });
+
+/* Correlations */
+export const getCorrelations = (sessionId: string, minConfidence = 0) =>
+  request<any[]>(`/correlations/session/${sessionId}?min_confidence=${minConfidence}`);
+export const getCorrelationsForFinding = (findingId: string) =>
+  request<any[]>(`/correlations/finding/${findingId}`);
+export const runCorrelation = (body: {
+  session_id: string;
+  repo_name: string;
+  hotspots: any[];
+  min_confidence?: number;
+}) =>
+  request<any[]>('/correlations/run', { method: 'POST', body: JSON.stringify(body) });
