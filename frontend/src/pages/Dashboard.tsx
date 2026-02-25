@@ -17,14 +17,18 @@ export default function Dashboard() {
   const [target, setTarget] = useState('');
   const [scope, setScope] = useState('');
 
+  const [error, setError] = useState('');
+
   const createMut = useMutation({
     mutationFn: () => createSession({ target, scope_regex: scope || undefined }),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['sessions'] }); setTarget(''); setScope(''); },
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['sessions'] }); setTarget(''); setScope(''); setError(''); },
+    onError: (e: any) => setError(`Create failed: ${e.message}`),
   });
 
   const launchMut = useMutation({
     mutationFn: (id: string) => startAgent(id),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['sessions'] }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['sessions'] }); setError(''); },
+    onError: (e: any) => setError(`Launch failed: ${e.message}`),
   });
 
   const sessions = data?.sessions ?? (Array.isArray(data) ? data : []);
@@ -64,6 +68,13 @@ export default function Dashboard() {
 
       {isLoading && <p style={{ color: 'var(--text-secondary)' }}>Loading...</p>}
 
+      {error && (
+        <div className="mb-4 px-4 py-2 rounded text-sm" style={{ background: '#ff475722', color: '#ff4757', border: '1px solid #ff4757' }}>
+          {error}
+          <button onClick={() => setError('')} className="ml-2 font-bold">✕</button>
+        </div>
+      )}
+
       {/* Sessions table */}
       <div className="rounded overflow-hidden" style={{ border: '1px solid var(--border)' }}>
         <table className="w-full text-sm">
@@ -93,7 +104,7 @@ export default function Dashboard() {
                   {new Date(s.created_at).toLocaleString()}
                 </td>
                 <td className="px-4 py-2 space-x-2">
-                  {s.status === 'created' && (
+                  {(s.status === 'created' || s.status === 'paused') && (
                     <button
                       onClick={() => launchMut.mutate(s.id)}
                       disabled={launchMut.isPending}
@@ -102,6 +113,11 @@ export default function Dashboard() {
                     >
                       ▶ Launch Agent
                     </button>
+                  )}
+                  {s.status === 'running' && (
+                    <span className="px-2 py-1 rounded text-xs font-bold" style={{ color: '#ffa502' }}>
+                      ⟳ Running…
+                    </span>
                   )}
                   <Link to={`/findings/${s.id}`} className="px-2 py-1 rounded text-xs"
                         style={{ background: 'var(--bg-card)', color: 'var(--text-secondary)' }}>
