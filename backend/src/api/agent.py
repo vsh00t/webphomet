@@ -105,8 +105,14 @@ async def stop_agent_by_session(
     payload: StopBySessionRequest,
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
-    """Set a cooperative stop flag so the running agent exits cleanly."""
+    """Set a cooperative stop flag so the running agent exits cleanly.
+
+    Also immediately marks the session as FAILED so the UI reflects
+    the change even if no Celery worker is actually running the agent
+    (zombie sessions from container restarts, etc.).
+    """
     from src.agent.orchestrator import request_stop
+    from src.db.models import SessionStatus
 
     session = await dal.get_session(db, payload.session_id)
     if session is None:
@@ -115,8 +121,15 @@ async def stop_agent_by_session(
             detail=f"Session {payload.session_id} not found",
         )
 
+    # Set Redis stop flag (for actively running agents)
     request_stop(str(payload.session_id))
+
+    # Immediately update DB status so the dashboard reflects the stop
+    if session.status == SessionStatus.RUNNING:
+        await dal.update_session_status(db, payload.session_id, SessionStatus.FAILED)
+        await db.commit()
+
     return {
         "session_id": str(payload.session_id),
-        "status": "stop_requested",
+        "status": "stopped",
     }
