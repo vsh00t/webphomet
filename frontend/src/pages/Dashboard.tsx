@@ -13,7 +13,11 @@ const STATUS_COLOR: Record<string, string> = {
 
 export default function Dashboard() {
   const qc = useQueryClient();
-  const { data, isLoading } = useQuery({ queryKey: ['sessions'], queryFn: getSessions });
+  const { data, isLoading } = useQuery({
+    queryKey: ['sessions'],
+    queryFn: getSessions,
+    refetchInterval: 5000,   // auto-refresh every 5s so status changes are visible
+  });
   const [target, setTarget] = useState('');
   const [scope, setScope] = useState('');
 
