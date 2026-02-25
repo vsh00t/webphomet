@@ -28,9 +28,15 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 
+    # Start Redis → WebSocket bridge (receives events from Celery workers)
+    from src.core.redis_pubsub import start_subscriber, stop_subscriber
+
+    sub_task = await start_subscriber()
+
     yield
 
-    # Shutdown: dispose the engine connection pool
+    # Shutdown
+    await stop_subscriber(sub_task)
     await engine.dispose()
 
 

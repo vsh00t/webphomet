@@ -4,6 +4,7 @@ Supports:
 - Per-session channels (session_id → set of websockets)
 - Broadcast to all connections
 - Typed events: finding, tool_run, breakpoint, phase_change, agent_message
+- Cross-process delivery via Redis Pub/Sub (Celery → FastAPI)
 """
 
 from __future__ import annotations
@@ -41,7 +42,7 @@ class ConnectionManager:
                 self._sessions[session_id].add(ws)
             else:
                 self._global.add(ws)
-        logger.info("WebSocket connected: session=%s", session_id or "global")
+        logger.info("WebSocket connected: session=%s (total=%d)", session_id or "global", self.active_connections)
 
     async def disconnect(self, ws: WebSocket, session_id: str | None = None) -> None:
         """Remove a WebSocket connection."""
@@ -53,7 +54,7 @@ class ConnectionManager:
             self._global.discard(ws)
         logger.debug("WebSocket disconnected: session=%s", session_id or "global")
 
-    # ── send methods ────────────────────────────────────────
+    # ── send methods (high-level — publish to Redis) ────────
 
     async def send_to_session(
         self,
@@ -61,39 +62,47 @@ class ConnectionManager:
         event_type: str,
         data: dict[str, Any],
     ) -> None:
-        """Send an event to all connections watching a specific session."""
-        message = json.dumps({
-            "type": event_type,
-            "session_id": session_id,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "data": data,
-        }, default=str)
+        """Send an event to all connections watching a specific session.
 
+        This publishes to Redis Pub/Sub so it works from **any** process
+        (Celery workers, FastAPI, etc.).  The FastAPI subscriber picks it
+        up and calls ``_deliver_raw()`` to push to real WebSocket clients.
+        """
+        from src.core.redis_pubsub import publish_event
+
+        await publish_event(session_id, event_type, data)
+
+    async def broadcast(self, event_type: str, data: dict[str, Any]) -> None:
+        """Broadcast an event to ALL connected websockets (via Redis)."""
+        from src.core.redis_pubsub import publish_event
+
+        await publish_event("__broadcast__", event_type, data)
+
+    # ── low-level delivery (called by Redis subscriber in FastAPI) ──
+
+    async def _deliver_raw(self, session_id: str, raw_json: str) -> None:
+        """Deliver a pre-serialized JSON message to session + global WS clients."""
         targets: set[WebSocket] = set()
         async with self._lock:
             targets.update(self._sessions.get(session_id, set()))
             targets.update(self._global)
 
+        if not targets:
+            return
+
         dead: list[tuple[WebSocket, str | None]] = []
         for ws in targets:
             try:
-                await ws.send_text(message)
+                await ws.send_text(raw_json)
             except Exception:
-                # Connection dead — schedule removal
                 sid = session_id if ws in self._sessions.get(session_id, set()) else None
                 dead.append((ws, sid))
 
         for ws, sid in dead:
             await self.disconnect(ws, sid)
 
-    async def broadcast(self, event_type: str, data: dict[str, Any]) -> None:
-        """Broadcast an event to ALL connected websockets."""
-        message = json.dumps({
-            "type": event_type,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "data": data,
-        }, default=str)
-
+    async def _broadcast_raw(self, raw_json: str) -> None:
+        """Deliver a pre-serialized JSON message to ALL WS clients."""
         all_ws: set[WebSocket] = set()
         async with self._lock:
             for sockets in self._sessions.values():
@@ -103,7 +112,7 @@ class ConnectionManager:
         dead: list[tuple[WebSocket, str | None]] = []
         for ws in all_ws:
             try:
-                await ws.send_text(message)
+                await ws.send_text(raw_json)
             except Exception:
                 dead.append((ws, None))
 
