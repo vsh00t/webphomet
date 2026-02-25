@@ -545,8 +545,18 @@ def run_agent_sync(session_id: str, **kwargs: Any) -> dict[str, Any]:
     """Synchronous wrapper for Celery — runs the agent loop."""
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
+
+    # Reset the async DB engine so its pool binds to **this** loop
+    from src.db.database import reset_engine
+    reset_engine()
+
     try:
-        orchestrator = AgentOrchestrator(uuid.UUID(session_id), **kwargs)
-        return loop.run_until_complete(orchestrator.run())
+        # Create the orchestrator INSIDE the new loop so that any async
+        # resources (httpx.AsyncClient, DB pools) bind to the correct loop.
+        async def _run() -> dict[str, Any]:
+            orchestrator = AgentOrchestrator(uuid.UUID(session_id), **kwargs)
+            return await orchestrator.run()
+
+        return loop.run_until_complete(_run())
     finally:
         loop.close()

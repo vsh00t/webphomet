@@ -32,6 +32,28 @@ async_session_factory = async_sessionmaker(
 )
 
 
+def reset_engine() -> None:
+    """Dispose and recreate the async engine + session factory.
+
+    Must be called from Celery workers when a new event loop is created,
+    because the old connection pool is bound to the previous loop.
+    """
+    global engine, async_session_factory
+    engine.sync_engine.dispose(close=False)
+    engine = create_async_engine(
+        settings.DATABASE_URL,
+        echo=False,
+        pool_size=10,
+        max_overflow=20,
+        pool_pre_ping=True,
+    )
+    async_session_factory = async_sessionmaker(
+        bind=engine,
+        class_=AsyncSession,
+        expire_on_commit=False,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Declarative base
 # ---------------------------------------------------------------------------
