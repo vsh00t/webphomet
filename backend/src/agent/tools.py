@@ -174,6 +174,585 @@ scan_secrets = _tool(
 
 
 # ---------------------------------------------------------------------------
+# Caido proxy integration
+# ---------------------------------------------------------------------------
+
+caido_get_requests = _tool(
+    name="caido_get_requests",
+    description=(
+        "Fetch intercepted HTTP requests from Caido proxy. "
+        "Returns recent proxy traffic including method, path, host, status code, "
+        "and response time. Use host filter to focus on a specific target."
+    ),
+    parameters={
+        "session_id": {
+            "type": "string",
+            "description": "UUID of the pentest session",
+        },
+        "limit": {
+            "type": "integer",
+            "description": "Max requests to return (default: 50)",
+        },
+        "offset": {
+            "type": "integer",
+            "description": "Pagination offset (default: 0)",
+        },
+        "host": {
+            "type": "string",
+            "description": "Filter by target host (e.g. 'dvwa.local')",
+        },
+    },
+    required=["session_id"],
+)
+
+caido_get_findings = _tool(
+    name="caido_get_findings",
+    description=(
+        "Fetch findings/issues discovered by Caido. "
+        "These are vulnerabilities Caido has identified through its own scanning. "
+        "Results include title, description, host, path, and reporter."
+    ),
+    parameters={
+        "session_id": {
+            "type": "string",
+            "description": "UUID of the pentest session",
+        },
+        "limit": {
+            "type": "integer",
+            "description": "Max findings to return (default: 50)",
+        },
+    },
+    required=["session_id"],
+)
+
+caido_create_finding = _tool(
+    name="caido_create_finding",
+    description=(
+        "Push a finding from WebPhomet into Caido for tracking and deduplication. "
+        "Useful for synchronizing automated findings back to the proxy tool."
+    ),
+    parameters={
+        "session_id": {
+            "type": "string",
+            "description": "UUID of the pentest session",
+        },
+        "title": {
+            "type": "string",
+            "description": "Finding title",
+        },
+        "description": {
+            "type": "string",
+            "description": "Finding description with details",
+        },
+        "request_id": {
+            "type": "string",
+            "description": "Caido request ID to associate with the finding",
+        },
+    },
+    required=["session_id", "title"],
+)
+
+caido_get_sitemap = _tool(
+    name="caido_get_sitemap",
+    description=(
+        "Get the Caido sitemap showing all discovered URLs/endpoints from proxy traffic. "
+        "Returns a tree structure of hosts and paths observed through the proxy."
+    ),
+    parameters={
+        "session_id": {
+            "type": "string",
+            "description": "UUID of the pentest session",
+        },
+    },
+    required=["session_id"],
+)
+
+caido_list_workflows = _tool(
+    name="caido_list_workflows",
+    description=(
+        "List available Caido workflows (active, passive, convert). "
+        "Workflows automate request analysis and transformation in Caido."
+    ),
+    parameters={
+        "session_id": {
+            "type": "string",
+            "description": "UUID of the pentest session",
+        },
+    },
+    required=["session_id"],
+)
+
+caido_run_workflow = _tool(
+    name="caido_run_workflow",
+    description=(
+        "Run a Caido workflow on a specific intercepted request. "
+        "Use list_workflows first to find available workflow IDs."
+    ),
+    parameters={
+        "session_id": {
+            "type": "string",
+            "description": "UUID of the pentest session",
+        },
+        "workflow_id": {
+            "type": "string",
+            "description": "Caido workflow ID to run",
+        },
+        "request_id": {
+            "type": "string",
+            "description": "Caido request ID to run the workflow on",
+        },
+    },
+    required=["session_id", "workflow_id", "request_id"],
+)
+
+caido_send_request = _tool(
+    name="caido_send_request",
+    description=(
+        "Send a crafted HTTP request through Caido's replay facility. "
+        "Useful for testing payloads, verifying vulnerabilities with PoC, "
+        "and fuzzing specific parameters."
+    ),
+    parameters={
+        "session_id": {
+            "type": "string",
+            "description": "UUID of the pentest session",
+        },
+        "raw_request": {
+            "type": "string",
+            "description": "Raw HTTP request string (e.g. 'GET /path HTTP/1.1\\nHost: target')",
+        },
+        "host": {
+            "type": "string",
+            "description": "Target host to send to",
+        },
+        "port": {
+            "type": "integer",
+            "description": "Target port (default: 443)",
+        },
+        "is_tls": {
+            "type": "boolean",
+            "description": "Whether to use TLS (default: true)",
+        },
+    },
+    required=["session_id", "raw_request", "host"],
+)
+
+caido_sync_findings = _tool(
+    name="caido_sync_findings",
+    description=(
+        "Bidirectional sync of findings between Caido and the WebPhomet database. "
+        "Direction 'pull' imports Caido findings into the DB (deduplicates by caido_finding_id). "
+        "Direction 'push' sends DB findings that have a caido_request_id to Caido. "
+        "Direction 'both' does pull then push. Use after scanning to consolidate findings."
+    ),
+    parameters={
+        "session_id": {
+            "type": "string",
+            "description": "UUID of the pentest session",
+        },
+        "direction": {
+            "type": "string",
+            "enum": ["pull", "push", "both"],
+            "description": "Sync direction: pull (Caido→DB), push (DB→Caido), both (default)",
+        },
+    },
+    required=["session_id"],
+)
+
+caido_run_predefined_workflow = _tool(
+    name="caido_run_predefined_workflow",
+    description=(
+        "Run a predefined security scan workflow through Caido. Available workflows: "
+        "sqli_error_detect (SQL injection via error patterns), "
+        "xss_reflect_probe (reflected XSS detection), "
+        "auth_bypass_probe (test protected endpoints without auth), "
+        "open_redirect_check (test redirect parameters), "
+        "header_injection (CRLF/header injection test). "
+        "Each workflow sends crafted requests and auto-creates findings in Caido."
+    ),
+    parameters={
+        "session_id": {
+            "type": "string",
+            "description": "UUID of the pentest session",
+        },
+        "workflow_name": {
+            "type": "string",
+            "enum": [
+                "sqli_error_detect",
+                "xss_reflect_probe",
+                "auth_bypass_probe",
+                "open_redirect_check",
+                "header_injection",
+            ],
+            "description": "Name of the predefined workflow to run",
+        },
+        "host": {
+            "type": "string",
+            "description": "Target host (e.g. 'localhost')",
+        },
+        "port": {
+            "type": "integer",
+            "description": "Target port (e.g. 4280 for DVWA)",
+        },
+        "is_tls": {
+            "type": "boolean",
+            "description": "Whether to use TLS (default: false for local targets)",
+        },
+        "base_path": {
+            "type": "string",
+            "description": "URL path to test (e.g. '/vulnerabilities/sqli/')",
+        },
+        "param_name": {
+            "type": "string",
+            "description": "Parameter name to inject into (e.g. 'id', 'q')",
+        },
+        "protected_path": {
+            "type": "string",
+            "description": "For auth_bypass_probe: the protected endpoint path",
+        },
+    },
+    required=["session_id", "workflow_name", "host", "port"],
+)
+
+
+# ---------------------------------------------------------------------------
+# DevTools (headless Chrome) integration
+# ---------------------------------------------------------------------------
+
+devtools_navigate = _tool(
+    name="devtools_navigate",
+    description=(
+        "Navigate the headless browser to a URL and capture the page. "
+        "Returns status code, final URL, page title, number of network requests, "
+        "and any console/JS errors encountered during load."
+    ),
+    parameters={
+        "session_id": {
+            "type": "string",
+            "description": "UUID of the pentest session",
+        },
+        "url": {
+            "type": "string",
+            "description": "URL to navigate to",
+        },
+        "wait_until": {
+            "type": "string",
+            "enum": ["load", "domcontentloaded", "networkidle", "commit"],
+            "description": "When to consider navigation finished (default: load)",
+        },
+    },
+    required=["session_id", "url"],
+)
+
+devtools_screenshot = _tool(
+    name="devtools_screenshot",
+    description=(
+        "Take a screenshot of the current browser page. "
+        "Returns a base64-encoded PNG image suitable for visual analysis "
+        "and evidence collection."
+    ),
+    parameters={
+        "session_id": {
+            "type": "string",
+            "description": "UUID of the pentest session",
+        },
+        "full_page": {
+            "type": "boolean",
+            "description": "Capture full scrollable page vs. viewport only (default: false)",
+        },
+    },
+    required=["session_id"],
+)
+
+devtools_discover_forms = _tool(
+    name="devtools_discover_forms",
+    description=(
+        "Discover all HTML forms on the current page. Returns form action URLs, "
+        "methods, and all input fields with their types and names. "
+        "Essential for identifying attack surfaces and injectable parameters."
+    ),
+    parameters={
+        "session_id": {
+            "type": "string",
+            "description": "UUID of the pentest session",
+        },
+    },
+    required=["session_id"],
+)
+
+devtools_discover_links = _tool(
+    name="devtools_discover_links",
+    description=(
+        "Discover all links (anchors, nav elements) on the current page. "
+        "Returns href, text content, and whether each link is internal or external."
+    ),
+    parameters={
+        "session_id": {
+            "type": "string",
+            "description": "UUID of the pentest session",
+        },
+    },
+    required=["session_id"],
+)
+
+devtools_detect_dom_xss = _tool(
+    name="devtools_detect_dom_xss",
+    description=(
+        "Scan the current page's JavaScript for DOM XSS sinks — dangerous patterns "
+        "like innerHTML, document.write, eval, location assignment, etc. "
+        "Returns a list of sinks found with the JS source context."
+    ),
+    parameters={
+        "session_id": {
+            "type": "string",
+            "description": "UUID of the pentest session",
+        },
+    },
+    required=["session_id"],
+)
+
+devtools_execute_js = _tool(
+    name="devtools_execute_js",
+    description=(
+        "Execute arbitrary JavaScript in the browser context and return the result. "
+        "Useful for extracting dynamic data, testing DOM manipulation, "
+        "or probing client-side security controls."
+    ),
+    parameters={
+        "session_id": {
+            "type": "string",
+            "description": "UUID of the pentest session",
+        },
+        "script": {
+            "type": "string",
+            "description": "JavaScript code to execute",
+        },
+    },
+    required=["session_id", "script"],
+)
+
+devtools_get_cookies = _tool(
+    name="devtools_get_cookies",
+    description=(
+        "Get all cookies for the current page context. "
+        "Returns name, value, domain, path, secure, httpOnly, sameSite attributes. "
+        "Useful for cookie security analysis."
+    ),
+    parameters={
+        "session_id": {
+            "type": "string",
+            "description": "UUID of the pentest session",
+        },
+    },
+    required=["session_id"],
+)
+
+devtools_get_storage = _tool(
+    name="devtools_get_storage",
+    description=(
+        "Get localStorage and sessionStorage contents for the current page. "
+        "Useful for finding tokens, session data, and sensitive info in client storage."
+    ),
+    parameters={
+        "session_id": {
+            "type": "string",
+            "description": "UUID of the pentest session",
+        },
+    },
+    required=["session_id"],
+)
+
+devtools_check_security_headers = _tool(
+    name="devtools_check_security_headers",
+    description=(
+        "Check the response headers of the last navigation for security headers. "
+        "Evaluates: CSP, X-Frame-Options, HSTS, X-Content-Type-Options, "
+        "Referrer-Policy, Permissions-Policy. Reports missing or weak headers."
+    ),
+    parameters={
+        "session_id": {
+            "type": "string",
+            "description": "UUID of the pentest session",
+        },
+    },
+    required=["session_id"],
+)
+
+devtools_full_page_audit = _tool(
+    name="devtools_full_page_audit",
+    description=(
+        "Combined security audit: navigates to URL, discovers forms and links, "
+        "extracts cookies and storage, detects DOM XSS sinks, captures JS errors, "
+        "checks security headers, and logs network activity — all in one call. "
+        "Returns a comprehensive page security profile."
+    ),
+    parameters={
+        "session_id": {
+            "type": "string",
+            "description": "UUID of the pentest session",
+        },
+        "url": {
+            "type": "string",
+            "description": "URL to audit",
+        },
+    },
+    required=["session_id", "url"],
+)
+
+
+# ---------------------------------------------------------------------------
+# Discovery & Mapping
+# ---------------------------------------------------------------------------
+
+run_discovery = _tool(
+    name="run_discovery",
+    description=(
+        "Run automated discovery & mapping against a target URL. "
+        "Combines DevTools crawling (form/link discovery, DOM XSS sinks, "
+        "security headers) with Caido sitemap data and technology fingerprinting. "
+        "BFS-crawls discovered links up to max_crawl_depth. "
+        "Returns complete attack surface: endpoints, forms, technologies, "
+        "cookies, security header analysis, and potential DOM XSS sinks."
+    ),
+    parameters={
+        "session_id": {
+            "type": "string",
+            "description": "UUID of the pentest session",
+        },
+        "url": {
+            "type": "string",
+            "description": "Target base URL to discover (e.g. http://localhost:4280/)",
+        },
+        "max_crawl_depth": {
+            "type": "integer",
+            "description": "Maximum BFS crawl depth for link following (default: 2)",
+        },
+    },
+    required=["session_id", "url"],
+)
+
+
+# ---------------------------------------------------------------------------
+# OWASP Injection & XSS Testing
+# ---------------------------------------------------------------------------
+
+run_injection_tests = _tool(
+    name="run_injection_tests",
+    description=(
+        "Run automated OWASP injection & XSS test suite against discovered parameters. "
+        "Tests include: sqli (error-based + blind time-based), xss_reflected, xss_dom "
+        "(via headless Chrome), command_injection, ssti (Server-Side Template Injection). "
+        "Provide a list of targets (path + param pairs) discovered by run_discovery. "
+        "Use cookie parameter for authenticated testing against protected pages."
+    ),
+    parameters={
+        "session_id": {
+            "type": "string",
+            "description": "UUID of the pentest session",
+        },
+        "host": {
+            "type": "string",
+            "description": "Target host (e.g. 'localhost')",
+        },
+        "port": {
+            "type": "integer",
+            "description": "Target port (e.g. 4280 for DVWA)",
+        },
+        "is_tls": {
+            "type": "boolean",
+            "description": "Whether to use TLS (default: false)",
+        },
+        "targets": {
+            "type": "array",
+            "description": "List of injection targets: [{path, param, method, extra_params}]",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string", "description": "URL path to test"},
+                    "param": {"type": "string", "description": "Parameter name to inject into"},
+                    "method": {"type": "string", "description": "HTTP method (GET or POST)"},
+                },
+            },
+        },
+        "test_types": {
+            "type": "array",
+            "description": "Tests to run: sqli, xss_reflected, xss_dom, command_injection, ssti",
+            "items": {"type": "string"},
+        },
+        "cookie": {
+            "type": "string",
+            "description": "Session cookie string for authenticated testing",
+        },
+    },
+    required=["session_id", "host", "port"],
+)
+
+
+run_auth_tests = _tool(
+    name="run_auth_tests",
+    description=(
+        "Run broken-authentication test suite. Tests include: default_credentials "
+        "(tries common user:pass combos), session_fixation, cookie_flags "
+        "(Secure/HttpOnly/SameSite), jwt_none_alg (JWT none-algorithm bypass), "
+        "idor (Insecure Direct Object Reference)."
+    ),
+    parameters={
+        "session_id": {"type": "string", "description": "Pentest session UUID"},
+        "host": {"type": "string", "description": "Target host"},
+        "port": {"type": "integer", "description": "Target port"},
+        "is_tls": {"type": "boolean", "description": "Use TLS (default false)"},
+        "test_types": {
+            "type": "array",
+            "description": "Tests: default_credentials, session_fixation, cookie_flags, jwt_none_alg, idor",
+            "items": {"type": "string"},
+        },
+        "login_path": {"type": "string", "description": "Login page path (default /login)"},
+        "cookie": {"type": "string", "description": "Session cookie for auth testing"},
+        "auth_header": {"type": "string", "description": "Authorization header value (for JWT tests)"},
+        "idor_path_pattern": {"type": "string", "description": "Path with {id} placeholder for IDOR tests"},
+        "username_field": {"type": "string", "description": "Login form username field name"},
+        "password_field": {"type": "string", "description": "Login form password field name"},
+    },
+    required=["session_id", "host", "port"],
+)
+
+
+run_ssrf_tests = _tool(
+    name="run_ssrf_tests",
+    description=(
+        "Run SSRF (Server-Side Request Forgery) test suite against URL/path parameters. "
+        "Tests include: ssrf_internal (localhost/private IPs), ssrf_cloud_metadata "
+        "(AWS/GCP/Azure metadata endpoints), ssrf_protocol (file://, gopher://)."
+    ),
+    parameters={
+        "session_id": {"type": "string", "description": "Pentest session UUID"},
+        "host": {"type": "string", "description": "Target host"},
+        "port": {"type": "integer", "description": "Target port"},
+        "is_tls": {"type": "boolean", "description": "Use TLS (default false)"},
+        "targets": {
+            "type": "array",
+            "description": "Targets: [{path, param, method, extra_params}]",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string"},
+                    "param": {"type": "string", "description": "URL/redirect parameter to inject into"},
+                    "method": {"type": "string"},
+                },
+            },
+        },
+        "test_types": {
+            "type": "array",
+            "description": "Tests: ssrf_internal, ssrf_cloud_metadata, ssrf_protocol",
+            "items": {"type": "string"},
+        },
+        "cookie": {"type": "string", "description": "Session cookie"},
+    },
+    required=["session_id", "host", "port"],
+)
+
+
+# ---------------------------------------------------------------------------
 # Analysis
 # ---------------------------------------------------------------------------
 
@@ -266,6 +845,29 @@ ALL_TOOLS: list[dict[str, Any]] = [
     get_recon_results,
     mirror_site,
     scan_secrets,
+    caido_get_requests,
+    caido_get_findings,
+    caido_create_finding,
+    caido_get_sitemap,
+    caido_list_workflows,
+    caido_run_workflow,
+    caido_send_request,
+    caido_sync_findings,
+    caido_run_predefined_workflow,
+    devtools_navigate,
+    devtools_screenshot,
+    devtools_discover_forms,
+    devtools_discover_links,
+    devtools_detect_dom_xss,
+    devtools_execute_js,
+    devtools_get_cookies,
+    devtools_get_storage,
+    devtools_check_security_headers,
+    devtools_full_page_audit,
+    run_discovery,
+    run_injection_tests,
+    run_auth_tests,
+    run_ssrf_tests,
     parse_nmap_output,
     summarize_findings,
     correlate_findings,

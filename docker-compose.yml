@@ -101,6 +101,43 @@ services:
       timeout: 5s
       retries: 3
 
+  # ── MCP Caido Server ──────────────────────────────────
+  mcp-caido:
+    build:
+      context: ./mcp-caido
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    env_file:
+      - .env
+    ports:
+      - "9200:9200"
+    networks:
+      - webphomet-net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9200/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  # ── MCP DevTools Server (Headless Chrome) ─────────────
+  mcp-devtools:
+    build:
+      context: ./mcp-devtools
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    env_file:
+      - .env
+    ports:
+      - "9300:9300"
+    networks:
+      - webphomet-net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9300/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
 volumes:
   postgres-data:
   redis-data:

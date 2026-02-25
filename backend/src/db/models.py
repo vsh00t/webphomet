@@ -157,6 +157,13 @@ class Finding(Base):
     poc: Mapped[str | None] = mapped_column(Text, nullable=True)
     recommendation: Mapped[str | None] = mapped_column(Text, nullable=True)
     references: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    # Caido bidirectional sync fields
+    caido_finding_id: Mapped[str | None] = mapped_column(
+        String(255), nullable=True, index=True, unique=True,
+    )
+    caido_request_id: Mapped[str | None] = mapped_column(
+        String(255), nullable=True,
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

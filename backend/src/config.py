@@ -27,11 +27,15 @@ class Settings(BaseSettings):
     ZAI_MODEL: str = "glm-5"
 
     # ── Caido Integration ────────────────────────────────
-    CAIDO_API_URL: str = "http://host.docker.internal:8080"
+    CAIDO_API_URL: str = "http://host.docker.internal:8088"
     CAIDO_API_KEY: str = ""
+    CAIDO_AUTH_TOKEN: str = ""
+    CAIDO_REFRESH_TOKEN: str = ""
 
     # ── MCP Servers ───────────────────────────────────────
     MCP_CLI_SECURITY_URL: str = "http://mcp-cli-security:9100"
+    MCP_CAIDO_URL: str = "http://mcp-caido:9200"
+    MCP_DEVTOOLS_URL: str = "http://mcp-devtools:9300"
 
     # ── Safety & Performance ─────────────────────────────
     SAFE_MODE: bool = True

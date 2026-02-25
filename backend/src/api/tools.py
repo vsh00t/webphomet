@@ -56,6 +56,14 @@ class ScanSecretsRequest(BaseModel):
     """Maximum findings to report (default: 500)."""
 
 
+class SyncCaidoFindingsRequest(BaseModel):
+    """Request to sync findings between Caido and WebPhomet DB."""
+
+    session_id: uuid.UUID
+    direction: str = "both"
+    """Sync direction: 'pull', 'push', or 'both' (default)."""
+
+
 class RunReconRequest(BaseModel):
     """Request to execute a full recon sweep."""
 
@@ -383,3 +391,402 @@ async def scan_secrets(
         "task_id": task.id,
         "status": "submitted",
     }
+
+
+# ---------------------------------------------------------------------------
+# Caido Finding Sync
+# ---------------------------------------------------------------------------
+
+
+@router.post(
+    "/sync-caido-findings",
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Bidirectional sync findings between Caido and WebPhomet DB",
+)
+async def sync_caido_findings(
+    payload: SyncCaidoFindingsRequest,
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    """Pull findings from Caido into the DB and/or push DB findings to Caido.
+
+    Direction:
+    - ``pull``: Import Caido findings into the DB (deduplicates).
+    - ``push``: Push DB findings (with caido_request_id) to Caido.
+    - ``both``: Pull first, then push.
+    """
+    session = await dal.get_session(db, payload.session_id)
+    if session is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Session {payload.session_id} not found",
+        )
+
+    if payload.direction not in ("pull", "push", "both"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="direction must be 'pull', 'push', or 'both'",
+        )
+
+    tool_run = await dal.create_tool_run(
+        db,
+        session_id=payload.session_id,
+        tool_name="caido_sync_findings",
+        command=f"sync_caido_findings direction={payload.direction}",
+    )
+    await dal.start_tool_run(db, tool_run.id)
+    await db.commit()
+
+    task = celery_app.send_task(
+        "jobs.sync_caido_findings",
+        kwargs={
+            "session_id": str(payload.session_id),
+            "tool_run_id": str(tool_run.id),
+            "direction": payload.direction,
+        },
+    )
+
+    return {
+        "tool_run_id": str(tool_run.id),
+        "task_id": task.id,
+        "direction": payload.direction,
+        "status": "submitted",
+    }
+
+
+# ---------------------------------------------------------------------------
+# Predefined Caido Workflows
+# ---------------------------------------------------------------------------
+
+
+class RunPredefinedWorkflowRequest(BaseModel):
+    """Request to execute a predefined security scan workflow."""
+
+    session_id: uuid.UUID
+    workflow_name: str
+    """Workflow name from registry (sqli_error_detect, xss_reflect_probe, etc.)."""
+    host: str
+    port: int
+    is_tls: bool = False
+    base_path: str = "/"
+    param_name: str = "id"
+    protected_path: str | None = None
+
+
+@router.post(
+    "/run-workflow",
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Run a predefined security scan workflow through Caido",
+)
+async def run_predefined_workflow(
+    payload: RunPredefinedWorkflowRequest,
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    """Execute a predefined security workflow that sends crafted requests
+    through Caido and auto-creates findings for detected vulnerabilities.
+
+    Available workflows: sqli_error_detect, xss_reflect_probe,
+    auth_bypass_probe, open_redirect_check, header_injection.
+    """
+    from src.services.workflows import WORKFLOW_REGISTRY
+
+    session = await dal.get_session(db, payload.session_id)
+    if session is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Session {payload.session_id} not found",
+        )
+
+    if payload.workflow_name not in WORKFLOW_REGISTRY:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Unknown workflow: {payload.workflow_name}. "
+            f"Available: {', '.join(WORKFLOW_REGISTRY.keys())}",
+        )
+
+    tool_run = await dal.create_tool_run(
+        db,
+        session_id=payload.session_id,
+        tool_name=f"workflow_{payload.workflow_name}",
+        command=f"run_workflow {payload.workflow_name} {payload.host}:{payload.port}{payload.base_path}",
+    )
+    await dal.start_tool_run(db, tool_run.id)
+    await db.commit()
+
+    wf_params: dict[str, Any] = {
+        "host": payload.host,
+        "port": payload.port,
+        "is_tls": payload.is_tls,
+    }
+    if payload.workflow_name == "auth_bypass_probe":
+        wf_params["protected_path"] = payload.protected_path or payload.base_path
+    else:
+        wf_params["base_path"] = payload.base_path
+        wf_params["param_name"] = payload.param_name
+
+    task = celery_app.send_task(
+        "jobs.run_predefined_workflow",
+        kwargs={
+            "session_id": str(payload.session_id),
+            "tool_run_id": str(tool_run.id),
+            "workflow_name": payload.workflow_name,
+            "params": wf_params,
+        },
+    )
+
+    return {
+        "tool_run_id": str(tool_run.id),
+        "task_id": task.id,
+        "workflow_name": payload.workflow_name,
+        "status": "submitted",
+    }
+
+
+# ═══════════════════════════════════════════════════════════════
+# DevTools endpoints
+# ═══════════════════════════════════════════════════════════════
+
+
+class DevToolsNavigateRequest(BaseModel):
+    session_id: uuid.UUID
+    url: str
+    wait_until: str = "load"
+
+
+class DevToolsFullAuditRequest(BaseModel):
+    session_id: uuid.UUID
+    url: str
+
+
+class DevToolsGenericRequest(BaseModel):
+    """Generic request that only needs session_id (for screenshot, forms, etc.)."""
+    session_id: uuid.UUID
+
+
+class DevToolsJsRequest(BaseModel):
+    session_id: uuid.UUID
+    script: str
+
+
+@router.post("/devtools-navigate")
+async def devtools_navigate(
+    payload: DevToolsNavigateRequest,
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    """Navigate headless browser to a URL."""
+    session = await dal.get_session(db, payload.session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail=f"Session {payload.session_id} not found")
+
+    tool_run = await dal.create_tool_run(
+        db, session_id=payload.session_id, tool_name="devtools_navigate",
+        command=f"devtools_navigate url={payload.url}",
+    )
+    await dal.start_tool_run(db, tool_run.id)
+    await db.commit()
+
+    task = celery_app.send_task(
+        "jobs.devtools_call",
+        kwargs={
+            "session_id": str(payload.session_id),
+            "tool_run_id": str(tool_run.id),
+            "method": "navigate",
+            "params": {"url": payload.url, "wait_until": payload.wait_until},
+        },
+    )
+    return {"tool_run_id": str(tool_run.id), "task_id": task.id, "status": "submitted"}
+
+
+@router.post("/devtools-full-audit")
+async def devtools_full_audit(
+    payload: DevToolsFullAuditRequest,
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    """Run a combined security audit on a URL."""
+    session = await dal.get_session(db, payload.session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail=f"Session {payload.session_id} not found")
+
+    tool_run = await dal.create_tool_run(
+        db, session_id=payload.session_id, tool_name="devtools_full_page_audit",
+        command=f"devtools_full_page_audit url={payload.url}",
+    )
+    await dal.start_tool_run(db, tool_run.id)
+    await db.commit()
+
+    task = celery_app.send_task(
+        "jobs.devtools_call",
+        kwargs={
+            "session_id": str(payload.session_id),
+            "tool_run_id": str(tool_run.id),
+            "method": "full_page_audit",
+            "params": {"url": payload.url},
+        },
+    )
+    return {"tool_run_id": str(tool_run.id), "task_id": task.id, "status": "submitted"}
+
+
+@router.post("/devtools-discover-forms")
+async def devtools_discover_forms(
+    payload: DevToolsGenericRequest,
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    """Discover HTML forms on the current page."""
+    tool_run = await dal.create_tool_run(
+        db, session_id=payload.session_id, tool_name="devtools_discover_forms",
+        command="devtools_discover_forms",
+    )
+    await dal.start_tool_run(db, tool_run.id)
+    await db.commit()
+
+    task = celery_app.send_task(
+        "jobs.devtools_call",
+        kwargs={
+            "session_id": str(payload.session_id),
+            "tool_run_id": str(tool_run.id),
+            "method": "discover_forms",
+            "params": {},
+        },
+    )
+    return {"tool_run_id": str(tool_run.id), "task_id": task.id, "status": "submitted"}
+
+
+@router.post("/devtools-detect-dom-xss")
+async def devtools_detect_dom_xss(
+    payload: DevToolsGenericRequest,
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    """Detect DOM XSS sinks on the current page."""
+    tool_run = await dal.create_tool_run(
+        db, session_id=payload.session_id, tool_name="devtools_detect_dom_xss",
+        command="devtools_detect_dom_xss",
+    )
+    await dal.start_tool_run(db, tool_run.id)
+    await db.commit()
+
+    task = celery_app.send_task(
+        "jobs.devtools_call",
+        kwargs={
+            "session_id": str(payload.session_id),
+            "tool_run_id": str(tool_run.id),
+            "method": "detect_dom_xss_sinks",
+            "params": {},
+        },
+    )
+    return {"tool_run_id": str(tool_run.id), "task_id": task.id, "status": "submitted"}
+
+
+# ── Injection tests ──────────────────────────────────────────
+class RunInjectionTestsRequest(BaseModel):
+    session_id: uuid.UUID
+    host: str
+    port: int = 80
+    is_tls: bool = False
+    targets: list[dict[str, Any]] | None = None
+    test_types: list[str] | None = None
+    cookie: str = ""
+
+
+@router.post("/run-injection-tests")
+async def run_injection_tests(
+    payload: RunInjectionTestsRequest,
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    """Run OWASP injection & XSS tests against a target."""
+    tool_run = await dal.create_tool_run(
+        db, session_id=payload.session_id, tool_name="injection_tests",
+        command=f"run_injection_tests {payload.host}:{payload.port}",
+    )
+    await dal.start_tool_run(db, tool_run.id)
+    await db.commit()
+
+    task = celery_app.send_task(
+        "jobs.run_injection_tests",
+        kwargs={
+            "session_id": str(payload.session_id),
+            "tool_run_id": str(tool_run.id),
+            "host": payload.host,
+            "port": payload.port,
+            "is_tls": payload.is_tls,
+            "targets": payload.targets,
+            "test_types": payload.test_types,
+            "cookie": payload.cookie,
+        },
+    )
+    return {"tool_run_id": str(tool_run.id), "task_id": task.id, "status": "submitted"}
+
+
+# ── Auth tests ───────────────────────────────────────────────
+class RunAuthTestsRequest(BaseModel):
+    session_id: uuid.UUID
+    host: str
+    port: int = 80
+    is_tls: bool = False
+    test_types: list[str] | None = None
+    login_path: str = "/login"
+    cookie: str = ""
+    auth_header: str = ""
+    username_field: str = "username"
+    password_field: str = "password"
+
+
+@router.post("/run-auth-tests")
+async def run_auth_tests(
+    payload: RunAuthTestsRequest,
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    """Run broken-authentication tests."""
+    tool_run = await dal.create_tool_run(
+        db, session_id=payload.session_id, tool_name="auth_tests",
+        command=f"run_auth_tests {payload.host}:{payload.port}",
+    )
+    await dal.start_tool_run(db, tool_run.id)
+    await db.commit()
+    task = celery_app.send_task(
+        "jobs.run_auth_tests",
+        kwargs={
+            "session_id": str(payload.session_id),
+            "tool_run_id": str(tool_run.id),
+            "host": payload.host, "port": payload.port, "is_tls": payload.is_tls,
+            "test_types": payload.test_types, "login_path": payload.login_path,
+            "cookie": payload.cookie, "auth_header": payload.auth_header,
+            "username_field": payload.username_field,
+            "password_field": payload.password_field,
+        },
+    )
+    return {"tool_run_id": str(tool_run.id), "task_id": task.id, "status": "submitted"}
+
+
+# ── SSRF tests ───────────────────────────────────────────────
+class RunSSRFTestsRequest(BaseModel):
+    session_id: uuid.UUID
+    host: str
+    port: int = 80
+    is_tls: bool = False
+    targets: list[dict[str, Any]] | None = None
+    test_types: list[str] | None = None
+    cookie: str = ""
+
+
+@router.post("/run-ssrf-tests")
+async def run_ssrf_tests(
+    payload: RunSSRFTestsRequest,
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    """Run SSRF tests."""
+    tool_run = await dal.create_tool_run(
+        db, session_id=payload.session_id, tool_name="ssrf_tests",
+        command=f"run_ssrf_tests {payload.host}:{payload.port}",
+    )
+    await dal.start_tool_run(db, tool_run.id)
+    await db.commit()
+    task = celery_app.send_task(
+        "jobs.run_ssrf_tests",
+        kwargs={
+            "session_id": str(payload.session_id),
+            "tool_run_id": str(tool_run.id),
+            "host": payload.host, "port": payload.port, "is_tls": payload.is_tls,
+            "targets": payload.targets, "test_types": payload.test_types,
+            "cookie": payload.cookie,
+        },
+    )
+    return {"tool_run_id": str(tool_run.id), "task_id": task.id, "status": "submitted"}

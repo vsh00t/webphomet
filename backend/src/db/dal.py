@@ -197,6 +197,8 @@ async def create_finding(
     poc: str | None = None,
     recommendation: str | None = None,
     references: dict[str, Any] | None = None,
+    caido_finding_id: str | None = None,
+    caido_request_id: str | None = None,
 ) -> Finding:
     """Insert a new finding and return it."""
     finding = Finding(
@@ -211,11 +213,61 @@ async def create_finding(
         poc=poc,
         recommendation=recommendation,
         references=references,
+        caido_finding_id=caido_finding_id,
+        caido_request_id=caido_request_id,
     )
     db.add(finding)
     await db.flush()
     await db.refresh(finding)
     return finding
+
+
+async def get_finding_by_caido_id(
+    db: AsyncSession,
+    caido_finding_id: str,
+) -> Finding | None:
+    """Fetch a finding by its Caido finding ID (for dedup)."""
+    result = await db.execute(
+        select(Finding).where(Finding.caido_finding_id == caido_finding_id)
+    )
+    return result.scalar_one_or_none()
+
+
+async def get_findings_without_caido_id(
+    db: AsyncSession,
+    session_id: uuid.UUID,
+) -> Sequence[Finding]:
+    """Fetch findings that have a caido_request_id but no caido_finding_id (push candidates)."""
+    result = await db.execute(
+        select(Finding).where(
+            Finding.session_id == session_id,
+            Finding.caido_request_id.isnot(None),
+            Finding.caido_finding_id.is_(None),
+        )
+    )
+    return result.scalars().all()
+
+
+async def update_finding_caido_ids(
+    db: AsyncSession,
+    finding_id: uuid.UUID,
+    *,
+    caido_finding_id: str | None = None,
+    caido_request_id: str | None = None,
+) -> None:
+    """Update Caido-related fields on a finding."""
+    values: dict[str, Any] = {}
+    if caido_finding_id is not None:
+        values["caido_finding_id"] = caido_finding_id
+    if caido_request_id is not None:
+        values["caido_request_id"] = caido_request_id
+    if values:
+        await db.execute(
+            update(Finding)
+            .where(Finding.id == finding_id)
+            .values(**values)
+        )
+        await db.flush()
 
 
 async def get_findings(
