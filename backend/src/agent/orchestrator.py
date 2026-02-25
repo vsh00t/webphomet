@@ -31,7 +31,7 @@ from src.config import settings
 from src.core.breakpoints import BreakpointAction, BreakpointPhase, breakpoint_manager
 from src.core.ws_manager import ws_breakpoint_callback, ws_manager
 from src.db import dal
-from src.db.database import async_session_factory
+from src.db import database as _database
 from src.db.models import SessionStatus
 
 # ---------------------------------------------------------------------------
@@ -210,7 +210,7 @@ class AgentOrchestrator:
             # Mark session as failed/completed depending on stop reason
             status = SessionStatus.COMPLETED if self.state.finished else SessionStatus.FAILED
             try:
-                async with async_session_factory() as db:
+                async with _database.async_session_factory() as db:
                     await dal.update_session_status(db, self.session_id, status)
                     await db.commit()
             except Exception:
@@ -225,7 +225,7 @@ class AgentOrchestrator:
         # Wire WebSocket callback for breakpoints
         breakpoint_manager.set_ws_callback(ws_breakpoint_callback)
 
-        async with async_session_factory() as db:
+        async with _database.async_session_factory() as db:
             session = await dal.get_session(db, self.session_id)
             if session is None:
                 raise ValueError(f"Session {self.session_id} not found")
@@ -335,7 +335,7 @@ class AgentOrchestrator:
             return
 
         # 3. Execute each tool call
-        async with async_session_factory() as db:
+        async with _database.async_session_factory() as db:
             for tc in tool_calls:
                 fn_name = tc["function"]["name"]
                 try:
@@ -461,7 +461,7 @@ class AgentOrchestrator:
                 self.state.pending_tool_runs.clear()
                 break
 
-            async with async_session_factory() as db:
+            async with _database.async_session_factory() as db:
                 for trid in list(self.state.pending_tool_runs):
                     run = await dal.get_tool_run(db, uuid.UUID(trid))
                     if run is None:
@@ -510,7 +510,7 @@ class AgentOrchestrator:
     async def _finalize_session(self) -> None:
         """Mark the session as COMPLETED when the agent signals done."""
         try:
-            async with async_session_factory() as db:
+            async with _database.async_session_factory() as db:
                 await dal.update_session_status(
                     db, self.session_id, SessionStatus.COMPLETED
                 )
@@ -551,14 +551,13 @@ def run_agent_sync(session_id: str, **kwargs: Any) -> dict[str, Any]:
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
 
-    # Reset the async DB engine so its pool binds to **this** loop
-    from src.db.database import reset_engine
-    reset_engine()
-
     try:
         # Create the orchestrator INSIDE the new loop so that any async
         # resources (httpx.AsyncClient, DB pools) bind to the correct loop.
         async def _run() -> dict[str, Any]:
+            # Reset engine HERE, inside the running loop, so asyncpg
+            # connections bind to *this* event loop — not the parent's.
+            _database.reset_engine()
             orchestrator = AgentOrchestrator(uuid.UUID(session_id), **kwargs)
             return await orchestrator.run()
 
