@@ -91,3 +91,32 @@ async def stop_agent(task_id: str) -> dict[str, Any]:
         "task_id": task_id,
         "status": "revoke_requested",
     }
+
+
+class StopBySessionRequest(BaseModel):
+    session_id: uuid.UUID
+
+
+@router.post(
+    "/stop",
+    summary="Stop the agent for a session (cooperative)",
+)
+async def stop_agent_by_session(
+    payload: StopBySessionRequest,
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    """Set a cooperative stop flag so the running agent exits cleanly."""
+    from src.agent.orchestrator import request_stop
+
+    session = await dal.get_session(db, payload.session_id)
+    if session is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Session {payload.session_id} not found",
+        )
+
+    request_stop(str(payload.session_id))
+    return {
+        "session_id": str(payload.session_id),
+        "status": "stop_requested",
+    }

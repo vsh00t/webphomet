@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
-import { getSessions, createSession, startAgent, deleteSession, deleteAllSessions } from '../lib/api';
+import { getSessions, createSession, startAgent, stopAgent, deleteSession, deleteAllSessions } from '../lib/api';
 import { useState } from 'react';
 
 const STATUS_COLOR: Record<string, string> = {
@@ -29,6 +29,12 @@ export default function Dashboard() {
     mutationFn: (id: string) => startAgent(id),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['sessions'] }); setError(''); },
     onError: (e: any) => setError(`Launch failed: ${e.message}`),
+  });
+
+  const stopMut = useMutation({
+    mutationFn: (id: string) => stopAgent(id),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['sessions'] }); setError(''); },
+    onError: (e: any) => setError(`Stop failed: ${e.message}`),
   });
 
   const deleteMut = useMutation({
@@ -156,9 +162,14 @@ export default function Dashboard() {
                     </button>
                   )}
                   {s.status === 'running' && (
-                    <span className="px-2 py-1 rounded text-xs font-bold" style={{ color: '#ffa502' }}>
-                      ⟳ Running…
-                    </span>
+                    <button
+                      onClick={() => { if (confirm('Stop this running agent?')) stopMut.mutate(s.id); }}
+                      disabled={stopMut.isPending}
+                      className="px-2 py-1 rounded text-xs font-bold cursor-pointer hover:opacity-80"
+                      style={{ background: '#ff4757', color: '#fff' }}
+                    >
+                      {stopMut.isPending ? '⏳ Stopping...' : '⏹ Stop Agent'}
+                    </button>
                   )}
                   <Link to={`/findings/${s.id}`} className="px-2 py-1 rounded text-xs"
                         style={{ background: 'var(--bg-card)', color: 'var(--text-secondary)' }}>

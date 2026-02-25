@@ -49,6 +49,8 @@ export const getToolRuns = (sessionId: string) =>
 /* Agent */
 export const startAgent = (sessionId: string) =>
   request<any>('/agent/start', { method: 'POST', body: JSON.stringify({ session_id: sessionId }) });
+export const stopAgent = (sessionId: string) =>
+  request<any>('/agent/stop', { method: 'POST', body: JSON.stringify({ session_id: sessionId }) });
 
 /* Breakpoints */
 export const getBreakpointConfig = (sessionId: string) =>

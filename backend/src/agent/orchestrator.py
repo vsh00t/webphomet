@@ -21,6 +21,9 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any
 
+import redis as _sync_redis
+import threading as _threading
+
 from src.agent.client import ZaiClient
 from src.agent.executor import dispatch
 from src.agent.tools import ALL_TOOLS
@@ -30,6 +33,43 @@ from src.core.ws_manager import ws_breakpoint_callback, ws_manager
 from src.db import dal
 from src.db.database import async_session_factory
 from src.db.models import SessionStatus
+
+# ---------------------------------------------------------------------------
+# Cooperative stop via Redis key
+# ---------------------------------------------------------------------------
+
+_STOP_KEY_PREFIX = "webphomet:stop:"
+_redis_local = _threading.local()
+
+
+def _get_sync_redis() -> _sync_redis.Redis:
+    """Per-thread sync Redis client (fork-safe for Celery)."""
+    if not hasattr(_redis_local, "client") or _redis_local.client is None:
+        _redis_local.client = _sync_redis.from_url(
+            settings.REDIS_URL, decode_responses=True,
+        )
+    return _redis_local.client
+
+
+def _is_stop_requested(session_id: uuid.UUID) -> bool:
+    """Check whether a stop signal exists for this session."""
+    try:
+        return _get_sync_redis().exists(f"{_STOP_KEY_PREFIX}{session_id}") > 0
+    except Exception:
+        return False
+
+
+def request_stop(session_id: str | uuid.UUID) -> None:
+    """Set the stop flag (TTL 10 min) so the running agent exits cleanly."""
+    _get_sync_redis().setex(f"{_STOP_KEY_PREFIX}{session_id}", 600, "1")
+
+
+def clear_stop(session_id: str | uuid.UUID) -> None:
+    """Remove the stop flag (called when an agent starts)."""
+    try:
+        _get_sync_redis().delete(f"{_STOP_KEY_PREFIX}{session_id}")
+    except Exception:
+        pass
 
 logger = logging.getLogger(__name__)
 
@@ -130,8 +170,19 @@ class AgentOrchestrator:
 
         try:
             await self._initialize()
+            clear_stop(self.session_id)  # remove any leftover stop signal
 
             while not self.state.finished and self.state.iteration < self.max_iterations:
+                # ── cooperative stop check ──
+                if _is_stop_requested(self.session_id):
+                    logger.info("Stop requested for session %s — exiting loop", self.session_id)
+                    self.state.error = "Stopped by operator"
+                    await ws_manager.send_to_session(
+                        str(self.session_id), "agent_stopped",
+                        {"reason": "Stopped by operator", "iteration": self.state.iteration},
+                    )
+                    break
+
                 self.state.iteration += 1
                 logger.info(
                     "Agent iteration %d/%d for session %s",
@@ -150,6 +201,15 @@ class AgentOrchestrator:
             self.state.error = str(e)
         finally:
             await self.client.close()
+            clear_stop(self.session_id)
+            # Mark session as failed/completed depending on stop reason
+            status = SessionStatus.COMPLETED if self.state.finished else SessionStatus.FAILED
+            try:
+                async with async_session_factory() as db:
+                    await dal.update_session_status(db, self.session_id, status)
+                    await db.commit()
+            except Exception:
+                logger.exception("Failed to update session status after agent exit")
 
         return self._build_summary()
 
@@ -384,6 +444,12 @@ class AgentOrchestrator:
         while self.state.pending_tool_runs and polls < MAX_POLL_ATTEMPTS:
             await asyncio.sleep(TOOL_POLL_INTERVAL)
             polls += 1
+
+            # Check stop signal during long polling waits
+            if _is_stop_requested(self.session_id):
+                logger.info("Stop requested during polling for session %s", self.session_id)
+                self.state.pending_tool_runs.clear()
+                break
 
             async with async_session_factory() as db:
                 for trid in list(self.state.pending_tool_runs):
