@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
-import { getSessions, createSession, startAgent } from '../lib/api';
+import { getSessions, createSession, startAgent, deleteSession, deleteAllSessions } from '../lib/api';
 import { useState } from 'react';
 
 const STATUS_COLOR: Record<string, string> = {
@@ -31,13 +31,44 @@ export default function Dashboard() {
     onError: (e: any) => setError(`Launch failed: ${e.message}`),
   });
 
+  const deleteMut = useMutation({
+    mutationFn: (id: string) => deleteSession(id),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['sessions'] }); },
+    onError: (e: any) => setError(`Delete failed: ${e.message}`),
+  });
+
+  const deleteAllMut = useMutation({
+    mutationFn: (ids: string[]) => deleteAllSessions(ids),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['sessions'] }); },
+    onError: (e: any) => setError(`Bulk delete failed: ${e.message}`),
+  });
+
   const sessions = data?.sessions ?? (Array.isArray(data) ? data : []);
+  const stoppedSessions = sessions.filter((s: any) => s.status !== 'running');
 
   return (
     <div>
       <h2 className="text-xl font-bold mb-4" style={{ color: 'var(--accent)' }}>
         Sessions
       </h2>
+
+      {/* Bulk actions */}
+      {sessions.length > 1 && (
+        <div className="flex gap-2 mb-4">
+          <button
+            onClick={() => {
+              if (confirm(`Delete ${stoppedSessions.length} non-running session(s)?`)) {
+                deleteAllMut.mutate(stoppedSessions.map((s: any) => s.id));
+              }
+            }}
+            disabled={deleteAllMut.isPending || stoppedSessions.length === 0}
+            className="px-3 py-1.5 rounded text-xs font-bold cursor-pointer hover:opacity-80 disabled:opacity-40 transition-opacity"
+            style={{ background: '#ff4757', color: '#fff' }}
+          >
+            {deleteAllMut.isPending ? '⏳ Deleting...' : `🗑 Delete All Non-Running (${stoppedSessions.length})`}
+          </button>
+        </div>
+      )}
 
       {/* Create session form */}
       <div className="flex gap-2 mb-6">
@@ -141,6 +172,17 @@ export default function Dashboard() {
                         style={{ background: 'var(--bg-card)', color: 'var(--text-secondary)' }}>
                     Config
                   </Link>
+                  {s.status !== 'running' && (
+                    <button
+                      onClick={() => { if (confirm('Delete this session?')) deleteMut.mutate(s.id); }}
+                      disabled={deleteMut.isPending}
+                      className="px-2 py-1 rounded text-xs cursor-pointer hover:opacity-80"
+                      style={{ background: '#ff475722', color: '#ff4757' }}
+                      title="Delete session"
+                    >
+                      🗑
+                    </button>
+                  )}
                 </td>
               </tr>
             ))}

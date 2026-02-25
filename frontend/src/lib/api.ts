@@ -12,6 +12,13 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 /* Sessions */
 export const getSessions = () => request<{ sessions: any[] }>('/sessions/');
 export const getSession = (id: string) => request<any>(`/sessions/${id}`);
+export const deleteSession = (id: string) =>
+  fetch(`${BASE}/sessions/${id}`, { method: 'DELETE' }).then((r) => {
+    if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
+  });
+export const deleteAllSessions = async (ids: string[]) => {
+  await Promise.all(ids.map(deleteSession));
+};
 export const createSession = (body: { target: string; scope_regex?: string }) => {
   // Ensure target has a protocol so URL parsing works
   let url = body.target.trim();
