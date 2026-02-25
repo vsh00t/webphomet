@@ -13,7 +13,16 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 export const getSessions = () => request<{ sessions: any[] }>('/sessions/');
 export const getSession = (id: string) => request<any>(`/sessions/${id}`);
 export const createSession = (body: { target: string; scope_regex?: string }) =>
-  request<any>('/sessions/', { method: 'POST', body: JSON.stringify(body) });
+  request<any>('/sessions/', {
+    method: 'POST',
+    body: JSON.stringify({
+      target_base_url: body.target,
+      app_type: 'web',
+      scope: body.scope_regex
+        ? { allowed_hosts: [new URL(body.target).hostname] }
+        : undefined,
+    }),
+  });
 
 /* Findings */
 export const getFindings = (sessionId: string) =>

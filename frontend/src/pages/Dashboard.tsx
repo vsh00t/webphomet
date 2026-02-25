@@ -38,14 +38,15 @@ export default function Dashboard() {
       {/* Create session form */}
       <div className="flex gap-2 mb-6">
         <input
-          placeholder="Target URL (e.g. http://target.com)"
+          placeholder="Target URL (e.g. https://example.com)"
           value={target}
           onChange={(e) => setTarget(e.target.value)}
           className="flex-1 px-3 py-2 rounded text-sm"
           style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', color: 'var(--text-primary)' }}
+          onKeyDown={(e) => e.key === 'Enter' && target && createMut.mutate()}
         />
         <input
-          placeholder="Scope regex (optional)"
+          placeholder="Scope hosts (optional, comma-sep)"
           value={scope}
           onChange={(e) => setScope(e.target.value)}
           className="w-64 px-3 py-2 rounded text-sm"
