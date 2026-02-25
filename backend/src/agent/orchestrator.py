@@ -100,6 +100,10 @@ exploitation analysis → reporting.
 - When all planned tests are complete, generate a final report.
 - Be methodical: enumerate first, then target high-value services.
 - Correlate findings from multiple tools to identify attack chains.
+- **IMPORTANT**: After discovering vulnerabilities, ALWAYS use caido_create_finding
+  to push each finding into Caido BEFORE generating the final report. This is a
+  mandatory step — do not skip it. Push every finding individually with a clear
+  title and description.
 
 ## Available session info
 - Session ID: {session_id}
@@ -110,7 +114,8 @@ exploitation analysis → reporting.
 ## Workflow
 1. Create/verify session → 2. Subdomain enumeration → 3. Port scanning →
 4. HTTP probing → 5. Technology detection → 6. Vulnerability scanning →
-7. Finding correlation → 8. Report generation
+7. Finding correlation → 8. **Push findings to Caido** (caido_create_finding) →
+9. Report generation
 """
 
 
